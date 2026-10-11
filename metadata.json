@@ -1,0 +1,6 @@
+{
+  "name": "Household CFO",
+  "description": "Shared family CFO & expense management app for Pratik and Manasvi with loans, investments, budgets, and automated insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
