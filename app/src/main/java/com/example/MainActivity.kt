@@ -132,6 +132,7 @@ fun MainApp(viewModel: FinanceViewModel) {
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val summary by viewModel.monthSummary.collectAsStateWithLifecycle()
     val transactions by viewModel.allTransactions.collectAsStateWithLifecycle()
+    val currentMonthAllTransactions by viewModel.currentMonthAllTransactions.collectAsStateWithLifecycle()
     val recurringRules by viewModel.recurringRules.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val budgets by viewModel.budgets.collectAsStateWithLifecycle()
@@ -397,19 +398,20 @@ fun MainApp(viewModel: FinanceViewModel) {
                                 )
                             }
                         } else {
-                            // CFO Review button on the header task bar just left to profile icon
+                            // CFO Review button on the top right
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = GoldAccent.copy(alpha = 0.18f),
                                 modifier = Modifier
+                                    .padding(end = 8.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .clickable { viewModel.setTab(6) }
                                     .testTag("top_cfo_review_btn")
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.AutoAwesome,
@@ -423,37 +425,6 @@ fun MainApp(viewModel: FinanceViewModel) {
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        IconButton(
-                            onClick = { viewModel.openHouseholdHub() },
-                            modifier = Modifier.testTag("top_profile_hub_btn")
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    if (currentUser != null) {
-                                        Text(
-                                            text = (currentUser?.displayName?.take(1) ?: "U").uppercase(),
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            fontSize = 14.sp
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.AccountCircle,
-                                            contentDescription = "Profile & Household Hub",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -534,7 +505,7 @@ fun MainApp(viewModel: FinanceViewModel) {
                     when (currentTab) {
                         0 -> DashboardScreen(
                             summary = summary,
-                            transactions = transactions,
+                            transactions = currentMonthAllTransactions,
                             recurringRules = recurringRules,
                             selectedMember = selectedMember,
                             household = household,
@@ -563,6 +534,8 @@ fun MainApp(viewModel: FinanceViewModel) {
                             onDeleteTransaction = { viewModel.deleteTransaction(it) },
                             isSensitiveRevealed = isSensitiveRevealed,
                             currentUserRole = activeUserRole,
+                            accounts = accounts,
+                            onUpdateTransaction = { viewModel.updateTransaction(it) },
                             onToggleSensitivity = {
                                 if (isSensitiveRevealed) {
                                     viewModel.setSensitivityRevealed(false)
@@ -573,21 +546,26 @@ fun MainApp(viewModel: FinanceViewModel) {
                         )
                         1 -> RecurringScreen(
                             recurringRules = recurringRules,
-                            transactionsForMonth = transactions,
+                            transactionsForMonth = currentMonthAllTransactions,
                             monthYear = viewModel.selectedMonth.value,
                             accounts = accounts,
+                            members = members,
+                            selectedMemberName = selectedMemberName,
                             onAddRecurring = { viewModel.addRecurringRule(it) },
                             onUpdateRecurring = { viewModel.updateRecurringRule(it) },
                             onDeleteRecurring = { viewModel.deleteRecurringRule(it.id) }
                         )
                         2 -> BudgetScreen(
                             budgets = budgets,
-                            transactions = transactions,
+                            transactions = currentMonthAllTransactions,
                             onSaveBudget = { cat, amt -> viewModel.saveBudget(cat, amt) },
                             onOpenEditBudgetPlan = { viewModel.openEditBudgetPlan() },
                             onDeleteTransaction = { viewModel.deleteTransaction(it) },
                             currentUserRole = activeUserRole,
-                            monthlyDiscretionaryBudget = household?.monthlyDiscretionaryBudget ?: summary.discretionaryBudget
+                            monthlyDiscretionaryBudget = household?.monthlyDiscretionaryBudget ?: summary.discretionaryBudget,
+                            accounts = accounts,
+                            members = members,
+                            onUpdateTransaction = { viewModel.updateTransaction(it) }
                         )
                         3 -> ReportsScreen(
                             summary = summary,
@@ -595,7 +573,8 @@ fun MainApp(viewModel: FinanceViewModel) {
                             onExportCsv = { viewModel.exportCsvData() },
                             onResetDatabase = { reseed -> viewModel.resetDatabase(reseed) },
                             currentUserRole = activeUserRole,
-                            expectedPin = household?.securityPin ?: "1234"
+                            expectedPin = household?.securityPin?.trim() ?: "",
+                            onSetPin = { viewModel.updateHouseholdSecurityPin(it) }
                         )
                         4 -> AccountsScreen(
                             accounts = accounts,
@@ -629,7 +608,10 @@ fun MainApp(viewModel: FinanceViewModel) {
                             transactions = transactions,
                             onOpenAddExpense = { viewModel.openAddExpense() },
                             onDeleteTransaction = { viewModel.deleteTransaction(it) },
-                            currentUserRole = activeUserRole
+                            currentUserRole = activeUserRole,
+                            accounts = accounts,
+                            members = members,
+                            onUpdateTransaction = { viewModel.updateTransaction(it) }
                         )
                         6 -> CfoReviewScreen(
                             report = cfoReport,
@@ -657,6 +639,7 @@ fun MainApp(viewModel: FinanceViewModel) {
             suggestedFromHistory = merchantSuggestion,
             onMerchantChanged = { viewModel.onMerchantTyped(it) },
             members = members,
+            initialPaidByName = selectedMemberName,
             onSave = { amount, category, paidBy, method, accId, accName, merchant, notes, timestamp ->
                 viewModel.addExpense(
                     amount = amount,
@@ -678,6 +661,7 @@ fun MainApp(viewModel: FinanceViewModel) {
         AddIncomeSheet(
             accounts = accounts,
             members = members,
+            initialPaidByName = selectedMemberName,
             onSave = { amount, category, paidBy, method, accId, accName, source, notes ->
                 viewModel.addIncome(
                     amount = amount,
@@ -791,7 +775,10 @@ fun MainApp(viewModel: FinanceViewModel) {
         SensitivityAuthDialog(
             title = "Device Security & PIN Verification",
             subtitle = "Authenticate using fingerprint, device lock, or security PIN to view sensitive balances.",
-            expectedPin = household?.securityPin ?: "1234",
+            expectedPin = household?.securityPin?.trim() ?: "",
+            onSetPin = { newPin ->
+                viewModel.updateHouseholdSecurityPin(newPin)
+            },
             onAuthenticated = {
                 viewModel.setSensitivityRevealed(true)
                 showSensitivityAuthDialog = false

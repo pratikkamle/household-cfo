@@ -19,6 +19,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE monthYear = :monthYear AND paidBy = :paidBy ORDER BY timestamp DESC")
     fun getTransactionsByMonthAndMember(monthYear: String, paidBy: String): Flow<List<TransactionEntity>>
 
+    @Query("SELECT * FROM transactions WHERE id = :id LIMIT 1")
+    suspend fun getTransactionById(id: Long): TransactionEntity?
+
     @Query("SELECT * FROM transactions WHERE recurringRuleId = :ruleId AND monthYear = :monthYear LIMIT 1")
     suspend fun getTransactionForRecurringRule(ruleId: Long, monthYear: String): TransactionEntity?
 

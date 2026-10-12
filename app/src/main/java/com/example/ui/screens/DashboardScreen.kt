@@ -66,6 +66,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.ceil
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Warning
+import com.example.data.model.AccountEntity
 import com.example.data.model.HouseholdMember
 import com.example.data.model.RecurringRuleEntity
 import com.example.data.model.TransactionEntity
@@ -88,6 +94,9 @@ import java.util.Locale
 
 import com.example.data.model.HouseholdEntity
 import com.example.data.model.MemberProfile
+import com.example.data.model.CategoryConstants
+import com.example.data.model.isJoint
+import com.example.data.model.matchesMember
 import com.example.data.sync.SyncState
 import com.google.firebase.auth.FirebaseUser
 import androidx.compose.material.icons.filled.CloudDone
@@ -126,53 +135,113 @@ fun DashboardScreen(
     onDeleteTransaction: (TransactionEntity) -> Unit = {},
     isSensitiveRevealed: Boolean = false,
     currentUserRole: UserRole = UserRole.ADMIN,
+    accounts: List<AccountEntity> = emptyList(),
+    onUpdateTransaction: (TransactionEntity) -> Unit = {},
     onToggleSensitivity: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isAllHousehold = selectedMemberName == null
     val jointExpenses = remember(transactions) {
         transactions
-            .filter { it.type == "EXPENSE" && it.paidBy.equals("JOINT", ignoreCase = true) }
+            .filter { it.type == "EXPENSE" && isJoint(it.paidBy) && !CategoryConstants.isCommitment(it.category, it.nature, it.recurringRuleId, it.merchant) }
             .sumOf { it.amount }
     }
     val jointSplitPerMember = remember(jointExpenses, members) {
         if (members.isNotEmpty()) jointExpenses / members.size else 0.0
     }
 
-    val activeDisplaySummary = remember(selectedMemberName, summary, transactions, recurringRules, jointSplitPerMember) {
+    val jointScheduledRules = remember(recurringRules) {
+        recurringRules
+            .filter { it.type == "EXPENSE" && it.isActive && isJoint(it.paidBy) && !CategoryConstants.isInvestment(it.category, it.type, it.nature) }
+            .sumOf { it.amount }
+    }
+    val jointScheduledTx = remember(transactions, recurringRules) {
+        transactions
+            .filter { tx ->
+                tx.type == "EXPENSE" && isJoint(tx.paidBy) && CategoryConstants.isCommitment(tx.category, tx.nature, tx.recurringRuleId, tx.merchant) &&
+                (tx.recurringRuleId == null || recurringRules.none { r -> r.id == tx.recurringRuleId && r.isActive })
+            }
+            .sumOf { it.amount }
+    }
+    val jointScheduledPerMember = remember(jointScheduledRules, jointScheduledTx, members) {
+        if (members.isNotEmpty()) (jointScheduledRules + jointScheduledTx) / members.size else 0.0
+    }
+
+    val jointInvestmentsRules = remember(recurringRules) {
+        recurringRules.filter { it.isActive && isJoint(it.paidBy) && CategoryConstants.isInvestment(it.category, it.type, it.nature) }.sumOf { it.amount }
+    }
+    val jointInvestmentsTx = remember(transactions, recurringRules) {
+        transactions.filter { tx ->
+            isJoint(tx.paidBy) && CategoryConstants.isInvestment(tx.category, tx.type, tx.nature) &&
+            (tx.recurringRuleId == null || recurringRules.none { r -> r.id == tx.recurringRuleId && r.isActive })
+        }.sumOf { it.amount }
+    }
+    val jointInvestmentsPerMember = remember(jointInvestmentsRules, jointInvestmentsTx, members) {
+        if (members.isNotEmpty()) (jointInvestmentsRules + jointInvestmentsTx) / members.size else 0.0
+    }
+
+    val activeDisplaySummary = remember(selectedMemberName, summary, transactions, recurringRules, jointSplitPerMember, jointScheduledPerMember, jointInvestmentsPerMember) {
         if (isAllHousehold) {
             summary
         } else {
             val memberName = selectedMemberName!!
             val mTxIncome = transactions
-                .filter { it.type == "INCOME" && it.paidBy.equals(memberName, ignoreCase = true) }
+                .filter { it.type == "INCOME" && matchesMember(it.paidBy, memberName, members) }
                 .sumOf { it.amount }
-            val mRuleIncome = recurringRules
-                .filter { it.type == "INCOME" && it.isActive && it.paidBy.equals(memberName, ignoreCase = true) }
+            val mPendingRuleIncome = recurringRules
+                .filter { rule ->
+                    rule.type == "INCOME" && rule.isActive && matchesMember(rule.paidBy, memberName, members) &&
+                    transactions.none { it.recurringRuleId == rule.id || (matchesMember(it.paidBy, rule.paidBy, members) && it.merchant.equals(rule.title, ignoreCase = true)) }
+                }
                 .sumOf { it.amount }
-            val mTotalIncome = if (mTxIncome > 0) maxOf(mTxIncome, mRuleIncome) else mRuleIncome
+            val mTotalIncome = mTxIncome + mPendingRuleIncome
 
-            val mScheduled = recurringRules
-                .filter { it.nature == "CORE_COMMITMENT" && it.type == "EXPENSE" && it.isActive && it.paidBy.equals(memberName, ignoreCase = true) }
+            val mActiveRuleScheduled = recurringRules
+                .filter { it.type == "EXPENSE" && it.isActive && !CategoryConstants.isInvestment(it.category, it.type, it.nature) && matchesMember(it.paidBy, memberName, members) }
                 .sumOf { it.amount }
+            val mUnlinkedTxScheduled = transactions
+                .filter { tx ->
+                    tx.type == "EXPENSE" && CategoryConstants.isCommitment(tx.category, tx.nature, tx.recurringRuleId, tx.merchant) &&
+                    matchesMember(tx.paidBy, memberName, members) &&
+                    (tx.recurringRuleId == null || recurringRules.none { r -> r.id == tx.recurringRuleId && r.isActive })
+                }
+                .sumOf { it.amount }
+            val mScheduled = mActiveRuleScheduled + mUnlinkedTxScheduled + jointScheduledPerMember
+
+            val mActiveRuleInvestments = recurringRules
+                .filter { it.isActive && CategoryConstants.isInvestment(it.category, it.type, it.nature) && matchesMember(it.paidBy, memberName, members) }
+                .sumOf { it.amount }
+            val mUnlinkedTxInvestments = transactions
+                .filter { tx ->
+                    CategoryConstants.isInvestment(tx.category, tx.type, tx.nature) &&
+                    matchesMember(tx.paidBy, memberName, members) &&
+                    (tx.recurringRuleId == null || recurringRules.none { r -> r.id == tx.recurringRuleId && r.isActive })
+                }
+                .sumOf { it.amount }
+            val mInvestments = mActiveRuleInvestments + mUnlinkedTxInvestments + jointInvestmentsPerMember
 
             val mOwnRandom = transactions
-                .filter { it.type == "EXPENSE" && it.nature == "DISCRETIONARY" && it.paidBy.equals(memberName, ignoreCase = true) }
+                .filter { tx ->
+                    tx.type == "EXPENSE" &&
+                    !CategoryConstants.isCommitment(tx.category, tx.nature, tx.recurringRuleId, tx.merchant) &&
+                    !CategoryConstants.isInvestment(tx.category, tx.type, tx.nature) &&
+                    matchesMember(tx.paidBy, memberName, members)
+                }
                 .sumOf { it.amount }
             val mTotalRandom = mOwnRandom + jointSplitPerMember
 
-            val mInvestments = recurringRules
-                .filter { it.type == "INVESTMENT" && it.isActive && it.paidBy.equals(memberName, ignoreCase = true) }
-                .sumOf { it.amount }
-
             val mAvailable = mTotalIncome - (mScheduled + mTotalRandom + mInvestments)
+            val memberBudgetShare = if (members.isNotEmpty()) summary.discretionaryBudget / members.size else summary.discretionaryBudget
+            val memberRemainingShare = maxOf(0.0, memberBudgetShare - mTotalRandom)
 
             summary.copy(
                 totalIncome = mTotalIncome,
                 scheduledExpenses = mScheduled,
                 randomExpenses = mTotalRandom,
                 investments = mInvestments,
-                availableBalance = mAvailable
+                availableBalance = mAvailable,
+                discretionaryBudget = memberBudgetShare,
+                remainingDiscretionary = memberRemainingShare
             )
         }
     }
@@ -308,51 +377,62 @@ fun DashboardScreen(
             }
         }
 
-        // Monthly Spending Progress & Discretionary Budget
+        // Discretionary Budget vs Actual Health Card (Matches Budget Screen Layout)
         item {
-            Card(
+            val totalBudget = activeDisplaySummary.discretionaryBudget
+            val totalSpent = activeDisplaySummary.randomExpenses
+            val totalRemaining = activeDisplaySummary.remainingDiscretionary
+            val overallProgress = if (totalBudget > 0) (totalSpent / totalBudget).toFloat().coerceIn(0f, 1f) else 0f
+            val percentUtilized = if (totalBudget > 0) ((totalSpent / totalBudget) * 100).toInt() else 0
+            val isOverBudget = totalSpent > totalBudget
+
+            ElevatedCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("budget_progress_card"),
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    val progress = if (summary.discretionaryBudget > 0) {
-                        (summary.randomExpenses / summary.discretionaryBudget).toFloat().coerceIn(0f, 1f)
-                    } else 0f
-                    val percent = (progress * 100).toInt()
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                imageVector = if (isOverBudget) Icons.Default.Warning else Icons.Default.Check,
+                                contentDescription = null,
+                                tint = if (isOverBudget) ExpenseRed else Emerald500,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = if (isOverBudget) "Attention: Overspending" else "On Track: Disciplined Pace",
+                                fontWeight = FontWeight.Bold,
+                                color = if (isOverBudget) ExpenseRed else Emerald500,
+                                fontSize = 14.sp
+                            )
+                        }
                         Text(
-                            text = "Remaining Discretionary Budget",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "$percent% used",
-                            fontSize = 12.sp,
+                            text = "$percentUtilized% utilized",
                             fontWeight = FontWeight.SemiBold,
-                            color = if (percent > 85) ExpenseRed else MaterialTheme.colorScheme.primary
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
                     LinearProgressIndicator(
-                        progress = { progress },
+                        progress = { overallProgress },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp)),
-                        color = if (percent > 85) ExpenseRed else MaterialTheme.colorScheme.primary,
+                            .height(10.dp)
+                            .clip(RoundedCornerShape(5.dp)),
+                        color = if (isOverBudget) ExpenseRed else Emerald500,
                         trackColor = MaterialTheme.colorScheme.outlineVariant
                     )
 
@@ -360,17 +440,194 @@ fun DashboardScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = "Spent: ${CurrencyFormatter.formatInr(summary.randomExpenses)}",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "Remaining: ${CurrencyFormatter.formatInr(summary.remainingDiscretionary)}",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Emerald500
-                        )
+                        Column {
+                            Text(text = "Total Budget", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = CurrencyFormatter.formatInr(totalBudget), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                        Column {
+                            Text(text = "Total Spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = CurrencyFormatter.formatInr(totalSpent), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = ExpenseRed)
+                        }
+                        Column {
+                            Text(text = "Remaining", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = CurrencyFormatter.formatInr(totalRemaining), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Emerald500)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Household Members Cashflow & Contributions Breakdown (Aggregates all member submissions)
+        if (isAllHousehold && members.isNotEmpty()) {
+            item {
+                ElevatedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("household_members_cashflow_breakdown_card"),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Groups,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Member Contributions & Cashflow",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Text(
+                                text = "${members.size} members",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        members.forEach { m ->
+                            val mIncome = transactions
+                                .filter { it.type == "INCOME" && matchesMember(it.paidBy, m.displayName, members) }
+                                .sumOf { it.amount } + recurringRules
+                                .filter { r -> r.type == "INCOME" && r.isActive && matchesMember(r.paidBy, m.displayName, members) &&
+                                    transactions.none { it.recurringRuleId == r.id || (matchesMember(it.paidBy, r.paidBy, members) && it.merchant.equals(r.title, ignoreCase = true)) }
+                                }
+                                .sumOf { it.amount }
+
+                            val mRuleCommitments = recurringRules
+                                .filter { it.type == "EXPENSE" && it.isActive && !CategoryConstants.isInvestment(it.category, it.type, it.nature) && matchesMember(it.paidBy, m.displayName, members) }
+                                .sumOf { it.amount }
+                            val mTxCommitments = transactions
+                                .filter { tx ->
+                                    tx.type == "EXPENSE" && CategoryConstants.isCommitment(tx.category, tx.nature, tx.recurringRuleId, tx.merchant) &&
+                                    matchesMember(tx.paidBy, m.displayName, members) &&
+                                    (tx.recurringRuleId == null || recurringRules.none { r -> r.id == tx.recurringRuleId && r.isActive })
+                                }
+                                .sumOf { it.amount }
+                            val mScheduled = mRuleCommitments + mTxCommitments + jointScheduledPerMember
+
+                            val mRandomSpent = transactions
+                                .filter { tx ->
+                                    tx.type == "EXPENSE" &&
+                                    !CategoryConstants.isCommitment(tx.category, tx.nature, tx.recurringRuleId, tx.merchant) &&
+                                    !CategoryConstants.isInvestment(tx.category, tx.type, tx.nature) &&
+                                    matchesMember(tx.paidBy, m.displayName, members)
+                                }
+                                .sumOf { it.amount } + jointSplitPerMember
+
+                            val mNetAvailable = mIncome - (mScheduled + mRandomSpent)
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onMemberNameSelected(m.displayName) }
+                                    .testTag("member_contribution_row_${m.displayName.lowercase()}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(m.color),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = m.initial,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
+                                            )
+                                        }
+                                        Column {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = m.displayName,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = Color(android.graphics.Color.parseColor(m.userRole.badgeColorHex)).copy(alpha = 0.15f)
+                                                ) {
+                                                    Text(
+                                                        text = m.userRole.displayName,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(android.graphics.Color.parseColor(m.userRole.badgeColorHex)),
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Income: ${CurrencyFormatter.formatInr(mIncome)}",
+                                                    fontSize = 11.sp,
+                                                    color = IncomeGreen,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Text(
+                                                    text = "• EMI: ${CurrencyFormatter.formatInr(mScheduled)}",
+                                                    fontSize = 11.sp,
+                                                    color = ExpenseRed,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = "Net Cash Flow",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = CurrencyFormatter.formatInr(mNetAvailable),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = if (mNetAvailable >= 0) Emerald500 else ExpenseRed
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -607,11 +864,13 @@ fun RecurringQuickItem(
 @Composable
 fun TransactionCard(
     transaction: TransactionEntity,
+    onEdit: (() -> Unit)? = null,
     onDelete: () -> Unit,
-    canDelete: Boolean = true
+    canDelete: Boolean = true,
+    canEdit: Boolean = true
 ) {
-    val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.US) }
-    val dateStr = dateFormat.format(Date(transaction.timestamp))
+    val fullDateTimeFormat = remember { SimpleDateFormat("EEE, dd MMM yyyy • hh:mm a", Locale.getDefault()) }
+    val fullDateStr = fullDateTimeFormat.format(Date(transaction.timestamp))
     val isIncome = transaction.type == "INCOME"
 
     val methodDisplay = if (isIncome && (transaction.paymentMethod.contains("DEBIT", ignoreCase = true) || transaction.paymentMethod.contains("AUTO", ignoreCase = true) || transaction.paymentMethod.isBlank())) {
@@ -621,81 +880,142 @@ fun TransactionCard(
     }
 
     Card(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().testTag("transaction_card_${transaction.id}")
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Main Top Row: Icon, Merchant/Category & Member, Amount & Action buttons
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                CategoryIconBadge(categoryName = transaction.category, size = 38)
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Text(
-                        text = transaction.merchant.ifBlank { transaction.category },
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    CategoryIconBadge(categoryName = transaction.category, size = 40)
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        MemberBadge(memberId = transaction.paidBy)
                         Text(
-                            text = methodDisplay,
-                            fontSize = 11.sp,
+                            text = transaction.merchant.ifBlank { transaction.category },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = if (isIncome) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurface
                         )
-                        Text(
-                            text = "• $dateStr",
-                            fontSize = 10.sp,
-                            maxLines = 1,
-                            color = MaterialTheme.colorScheme.outline
-                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            MemberBadge(memberId = transaction.paidBy)
+                            Text(
+                                text = "• ${transaction.category}",
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "${if (isIncome) "+" else "-"}${CurrencyFormatter.formatInr(transaction.amount)}",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        color = if (isIncome) IncomeGreen else ExpenseRed
+                    )
+                    if (canEdit && onEdit != null) {
+                        IconButton(
+                            onClick = onEdit,
+                            modifier = Modifier.size(32.dp).testTag("edit_tx_${transaction.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit Transaction",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    if (canDelete) {
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(32.dp).testTag("delete_tx_${transaction.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete",
+                                tint = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            // Dedicated small section displaying the proper complete datetime value in a human readable format
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "${if (isIncome) "+" else "-"}${CurrencyFormatter.formatInr(transaction.amount)}",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = if (isIncome) IncomeGreen else ExpenseRed
-                )
-                if (canDelete) {
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(32.dp).testTag("delete_tx_${transaction.id}")
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.size(16.dp)
+                            imageVector = Icons.Default.CalendarMonth,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = fullDateStr,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
+                    Text(
+                        text = methodDisplay,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isIncome) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+            }
+
+            // Additional comments / notes if present
+            if (transaction.notes.isNotBlank()) {
+                Text(
+                    text = "Note: ${transaction.notes}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
             }
         }
     }

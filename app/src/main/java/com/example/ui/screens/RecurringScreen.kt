@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,11 +58,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import com.example.data.model.AccountEntity
+import com.example.data.model.MemberProfile
 import com.example.data.model.RecurringTransactionEntity
 import com.example.data.model.TransactionEntity
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.components.MemberBadge
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
@@ -76,13 +85,16 @@ fun RecurringScreen(
     transactionsForMonth: List<TransactionEntity>,
     monthYear: String,
     accounts: List<AccountEntity> = emptyList(),
+    members: List<MemberProfile> = emptyList(),
+    selectedMemberName: String? = null,
     onAddRecurring: (RecurringTransactionEntity) -> Unit = {},
     onUpdateRecurring: (RecurringTransactionEntity) -> Unit = {},
     onDeleteRecurring: (RecurringTransactionEntity) -> Unit = {},
     onMarkPaid: (RecurringTransactionEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableStateOf("ALL") } // "ALL", "LOANS", "INVESTMENTS", "INCOME"
+    var selectedTab by remember { mutableStateOf("ALL") } // "ALL", "LOANS", "INVESTMENTS", "INCOME", "BILLS"
+    var isAmountsVisible by remember { mutableStateOf(false) }
     var isAddSheetOpen by remember { mutableStateOf(false) }
     var ruleToEdit by remember { mutableStateOf<RecurringTransactionEntity?>(null) }
     var ruleToDelete by remember { mutableStateOf<RecurringTransactionEntity?>(null) }
@@ -92,20 +104,19 @@ fun RecurringScreen(
 
     val filteredRules = when (selectedTab) {
         "LOANS" -> recurringRules.filter { it.category.contains("Loan") || it.category.contains("EMI") }
-        "INVESTMENTS" -> recurringRules.filter { it.nature == "INVESTMENT" }
+        "INVESTMENTS" -> recurringRules.filter { it.nature == "INVESTMENT" || it.type == "INVESTMENT" }
         "INCOME" -> recurringRules.filter { it.type == "INCOME" }
+        "BILLS" -> recurringRules.filter { it.category.contains("Insurance") || it.category.contains("Bill") || it.category.contains("Rent") }
         else -> recurringRules
     }
-
-    val totalMonthlyLoans = recurringRules.filter { it.category.contains("Loan") || it.category.contains("EMI") }.sumOf { it.amount }
-    val totalMonthlyInvestments = recurringRules.filter { it.nature == "INVESTMENT" }.sumOf { it.amount }
-    val totalExpectedIncome = recurringRules.filter { it.type == "INCOME" }.sumOf { it.amount }
 
     // Add Commitment Sheet
     if (isAddSheetOpen) {
         AddRecurringSheet(
             sheetState = sheetState,
             accounts = accounts,
+            members = members,
+            initialPaidByName = selectedMemberName,
             onDismiss = { isAddSheetOpen = false },
             onSaveRecurring = { newRule ->
                 onAddRecurring(newRule)
@@ -119,6 +130,8 @@ fun RecurringScreen(
         AddRecurringSheet(
             sheetState = sheetState,
             accounts = accounts,
+            members = members,
+            initialPaidByName = selectedMemberName,
             initialRule = ruleToEdit,
             onDismiss = { ruleToEdit = null },
             onSaveRecurring = { updatedRule ->
@@ -182,158 +195,85 @@ fun RecurringScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Top Header with Title and "Schedule" button
+                // Top Header with Title, Eye Toggle, and "Schedule" button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "Scheduled Commitments",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Automated Loans, SIPs, Insurance & Salaries",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column {
+                            Text(
+                                text = "Scheduled Commitments",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Automated Loans, SIPs, Insurance & Salaries",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
-                    Button(
-                        onClick = { isAddSheetOpen = true },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        modifier = Modifier.height(38.dp).testTag("open_add_recurring_btn")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = "Schedule", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        IconButton(
+                            onClick = { isAmountsVisible = !isAmountsVisible },
+                            modifier = Modifier.size(38.dp).testTag("recurring_toggle_visibility")
+                        ) {
+                            Icon(
+                                imageVector = if (isAmountsVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (isAmountsVisible) "Hide Scheduled Amounts" else "View Scheduled Amounts",
+                                tint = if (isAmountsVisible) Emerald500 else MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        Button(
+                            onClick = { isAddSheetOpen = true },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.height(38.dp).testTag("open_add_recurring_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = "Schedule", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
-                // 3 Equal-Sized Consistent Summary Cards
+                // Filter Chips Row for all commitment types
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(68.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = "Monthly EMIs",
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = CurrencyFormatter.formatInr(totalMonthlyLoans),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                color = ExpenseRed
-                            )
-                        }
-                    }
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(68.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = "Wealth / SIP",
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = CurrencyFormatter.formatInr(totalMonthlyInvestments),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                color = InvestmentBlue
-                            )
-                        }
-                    }
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(68.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = "Expected Income",
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = CurrencyFormatter.formatInr(totalExpectedIncome),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                color = IncomeGreen
-                            )
-                        }
-                    }
-                }
-
-                // Consistent Filter Chips Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
                     val filterOptions = listOf(
-                        "ALL" to "All Rules",
+                        "ALL" to "All Commitments",
                         "LOANS" to "Loans & EMI",
-                        "INVESTMENTS" to "SIP & NPS",
-                        "INCOME" to "Salary & Rent"
+                        "INVESTMENTS" to "SIP & Wealth",
+                        "INCOME" to "Salary & Income",
+                        "BILLS" to "Bills & Insurance"
                     )
                     filterOptions.forEach { (key, label) ->
                         FilterChip(
                             selected = selectedTab == key,
                             onClick = { selectedTab = key },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(34.dp),
                             shape = RoundedCornerShape(10.dp),
                             label = {
                                 Text(
                                     text = label,
-                                    fontSize = 11.sp,
-                                    maxLines = 1,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selectedTab == key) FontWeight.Bold else FontWeight.Normal
                                 )
                             }
                         )
@@ -389,6 +329,7 @@ fun RecurringScreen(
                     RecurringRuleCard(
                         rule = rule,
                         isPaid = isPaid,
+                        isAmountsVisible = isAmountsVisible,
                         onEdit = { ruleToEdit = rule },
                         onDelete = { ruleToDelete = rule }
                     )
@@ -402,11 +343,14 @@ fun RecurringScreen(
 fun RecurringRuleCard(
     rule: RecurringTransactionEntity,
     isPaid: Boolean,
+    isAmountsVisible: Boolean = true,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onEdit() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -453,7 +397,7 @@ fun RecurringRuleCard(
                 }
 
                 Text(
-                    text = CurrencyFormatter.formatInr(rule.amount),
+                    text = if (isAmountsVisible) CurrencyFormatter.formatInr(rule.amount) else "₹ ••••••••",
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 17.sp,
                     color = when (rule.type) {

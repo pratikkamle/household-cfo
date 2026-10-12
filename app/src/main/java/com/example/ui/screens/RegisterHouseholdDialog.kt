@@ -260,7 +260,7 @@ fun RegisterHouseholdDialog(
                                 return@Button
                             }
                             val budget = budgetText.toDoubleOrNull() ?: 50000.0
-                            val finalPin = if (securityPin.isNotBlank()) securityPin.trim() else "1234"
+                            val finalPin = if (securityPin.isNotBlank()) securityPin.trim() else ""
                             onRegister(
                                 adminName.trim(),
                                 adminEmail.trim(),

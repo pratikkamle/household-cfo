@@ -51,10 +51,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.AccountEntity
 import com.example.data.model.CategoryBudgetEntity
+import com.example.data.model.MemberProfile
 import com.example.data.model.TransactionEntity
 import com.example.data.model.UserRole
 import com.example.ui.components.CategoryIconBadge
+import com.example.ui.screens.EditTransactionDialog
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.UpcomingOrange
@@ -70,11 +73,15 @@ fun BudgetScreen(
     onDeleteTransaction: (TransactionEntity) -> Unit = {},
     currentUserRole: UserRole = UserRole.ADMIN,
     monthlyDiscretionaryBudget: Double = 0.0,
+    accounts: List<AccountEntity> = emptyList(),
+    members: List<MemberProfile> = emptyList(),
+    onUpdateTransaction: (TransactionEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var editingCategory by remember { mutableStateOf<CategoryBudgetEntity?>(null) }
     var editAmountText by remember { mutableStateOf("") }
     var transactionToDelete by remember { mutableStateOf<TransactionEntity?>(null) }
+    var transactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
 
     // Compute actual spending per category for this month
     val spendMap = transactions
@@ -332,7 +339,7 @@ fun BudgetScreen(
             }
         }
 
-        // Section for Budget Transactions Breakdown
+        // Section for Budget Transactions Breakdown / Recent Transactions
         if (transactions.isNotEmpty()) {
             item {
                 Spacer(modifier = Modifier.height(6.dp))
@@ -342,7 +349,7 @@ fun BudgetScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Budget Expenses Breakdown",
+                        text = "Recent Transactions",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -354,14 +361,30 @@ fun BudgetScreen(
                 }
             }
 
-            items(transactions.take(15), key = { it.id }) { tx ->
+            items(transactions.take(20), key = { it.id }) { tx ->
                 TransactionCard(
                     transaction = tx,
+                    onEdit = { transactionToEdit = tx },
                     onDelete = { transactionToDelete = tx },
-                    canDelete = currentUserRole.canAddTransactions
+                    canDelete = currentUserRole.canAddTransactions,
+                    canEdit = currentUserRole.canAddTransactions
                 )
             }
         }
+    }
+
+    // Edit Transaction Dialog
+    if (transactionToEdit != null) {
+        EditTransactionDialog(
+            transaction = transactionToEdit!!,
+            accounts = accounts,
+            members = members,
+            onSave = { updated ->
+                onUpdateTransaction(updated)
+                transactionToEdit = null
+            },
+            onDismiss = { transactionToEdit = null }
+        )
     }
 
     // Delete confirmation for budget transactions

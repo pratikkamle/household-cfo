@@ -87,6 +87,7 @@ fun AddExpenseSheet(
     suggestedFromHistory: TransactionEntity?,
     onMerchantChanged: (String) -> Unit,
     members: List<MemberProfile> = emptyList(),
+    initialPaidByName: String? = null,
     onSave: (
         amount: Double,
         category: String,
@@ -114,7 +115,12 @@ fun AddExpenseSheet(
     var amountText by remember { mutableStateOf("") }
     var merchantText by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Food & Dining") }
-    var selectedPaidByName by remember(displayMembers) { mutableStateOf(displayMembers.firstOrNull()?.displayName ?: "Primary") }
+    var selectedPaidByName by remember(displayMembers, initialPaidByName) {
+        val defaultPayer = initialPaidByName?.takeIf { it.isNotBlank() }
+            ?: displayMembers.firstOrNull()?.displayName
+            ?: "Primary"
+        mutableStateOf(defaultPayer)
+    }
     var selectedPaymentMethod by remember { mutableStateOf(PaymentMethod.UPI) }
     var selectedAccountId by remember { mutableStateOf<Long?>(accounts.firstOrNull()?.id) }
     var notesText by remember { mutableStateOf("") }

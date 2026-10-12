@@ -62,6 +62,7 @@ fun SensitivityAuthDialog(
     title: String = "Security Authentication",
     subtitle: String = "Authenticate to reveal sensitive balances or perform administrative actions.",
     expectedPin: String = "",
+    onSetPin: (String) -> Unit = {},
     onAuthenticated: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -70,7 +71,9 @@ fun SensitivityAuthDialog(
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
+    val isPinConfigured = expectedPin.isNotBlank()
     var pinInput by remember { mutableStateOf("") }
+    var confirmPinInput by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     // Consent state for fingerprint/biometric authentication
@@ -142,7 +145,7 @@ fun SensitivityAuthDialog(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isDeviceSecure && isBiometricEnabled) Icons.Default.Fingerprint else Icons.Default.Lock,
+                        imageVector = if (!isPinConfigured) Icons.Default.Pin else if (isDeviceSecure && isBiometricEnabled) Icons.Default.Fingerprint else Icons.Default.Lock,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(32.dp)
@@ -151,198 +154,278 @@ fun SensitivityAuthDialog(
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = title,
+                        text = if (!isPinConfigured) "Set Security PIN" else title,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = subtitle,
+                        text = if (!isPinConfigured) "No security PIN is currently set for your household. Please set a 4-digit PIN to secure your sensitive figures." else subtitle,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
                 }
 
-                // BIOMETRIC OPTION WITH EXPLICIT PERMISSION/CONSENT
-                if (isDeviceSecure) {
-                    if (isBiometricEnabled) {
-                        // User already permitted fingerprint authentication
-                        OutlinedButton(
-                            onClick = { launchDeviceUnlock() },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Fingerprint,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                if (!isPinConfigured) {
+                    // SET PIN FLOW
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = pinInput,
+                            onValueChange = {
+                                if (it.length <= 6 && it.all { char -> char.isDigit() }) {
+                                    pinInput = it
+                                    errorMessage = null
+                                }
+                            },
+                            label = { Text("Create 4-Digit PIN") },
+                            placeholder = { Text("e.g. 2468") },
+                            leadingIcon = { Icon(imageVector = Icons.Default.Pin, contentDescription = null) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth().testTag("create_pin_input"),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = confirmPinInput,
+                            onValueChange = {
+                                if (it.length <= 6 && it.all { char -> char.isDigit() }) {
+                                    confirmPinInput = it
+                                    errorMessage = null
+                                }
+                            },
+                            label = { Text("Confirm PIN") },
+                            placeholder = { Text("Re-enter PIN") },
+                            leadingIcon = { Icon(imageVector = Icons.Default.Lock, contentDescription = null) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth().testTag("confirm_pin_input"),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+
+                        errorMessage?.let { err ->
                             Text(
-                                text = "Authenticate with Fingerprint",
+                                text = err,
+                                color = ExpenseRed,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(start = 4.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (pinInput.length < 4) {
+                                    errorMessage = "PIN must be at least 4 digits."
+                                    return@Button
+                                }
+                                if (pinInput != confirmPinInput) {
+                                    errorMessage = "PINs do not match. Please re-enter."
+                                    return@Button
+                                }
+                                onSetPin(pinInput)
+                                onAuthenticated()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("save_and_reveal_pin_btn")
+                        ) {
+                            Text("Set PIN & Reveal")
+                        }
+                    }
+                } else {
+                    // VERIFY PIN FLOW
+                    // BIOMETRIC OPTION WITH EXPLICIT PERMISSION/CONSENT
+                    if (isDeviceSecure) {
+                        if (isBiometricEnabled) {
+                            // User already permitted fingerprint authentication
+                            OutlinedButton(
+                                onClick = { launchDeviceUnlock() },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fingerprint,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Authenticate with Fingerprint",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp
+                                )
+                            }
+
+                            Text(
+                                text = "— OR ENTER SECURITY PIN —",
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (showBiometricConsentPrompt) {
+                            // Asking user permission to enable fingerprint auth
+                            Card(
+                                shape = RoundedCornerShape(14.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Fingerprint,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text(
+                                            text = "Enable Fingerprint Sign-in?",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                    Text(
+                                        text = "Would you like to use your device fingerprint sensor for faster authentication to reveal sensitive financial figures?",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        lineHeight = 15.sp
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        TextButton(onClick = { showBiometricConsentPrompt = false }) {
+                                            Text("No, Use PIN", fontSize = 12.sp)
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Button(
+                                            onClick = {
+                                                sharedPrefs.edit().putBoolean(KEY_BIOMETRIC_CONSENT, true).apply()
+                                                isBiometricEnabled = true
+                                                showBiometricConsentPrompt = false
+                                                launchDeviceUnlock()
+                                            },
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("Enable & Scan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Prompt affordance to enable fingerprint
+                            OutlinedButton(
+                                onClick = { showBiometricConsentPrompt = true },
+                                modifier = Modifier.fillMaxWidth().height(44.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fingerprint,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Enable Fingerprint Authentication",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    // PIN Input Field
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = pinInput,
+                            onValueChange = {
+                                if (it.length <= 6 && it.all { char -> char.isDigit() }) {
+                                    pinInput = it
+                                    errorMessage = null
+                                    if (it == expectedPin) {
+                                        onAuthenticated()
+                                    }
+                                }
+                            },
+                            label = { Text("Security PIN") },
+                            placeholder = { Text("Enter PIN") },
+                            leadingIcon = {
+                                Icon(imageVector = Icons.Default.Pin, contentDescription = null)
+                            },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("security_pin_input"),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            isError = errorMessage != null
+                        )
+
+                        errorMessage?.let { err ->
+                            Text(
+                                text = err,
+                                color = ExpenseRed,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(start = 4.dp)
                             )
                         }
 
                         Text(
-                            text = "— OR ENTER SECURITY PIN —",
+                            text = "Enter your household security PIN to reveal sensitive figures.",
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else if (showBiometricConsentPrompt) {
-                        // Asking user permission to enable fingerprint auth
-                        Card(
-                            shape = RoundedCornerShape(14.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fingerprint,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Text(
-                                        text = "Enable Fingerprint Sign-in?",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                                Text(
-                                    text = "Would you like to use your device fingerprint sensor for faster authentication to reveal sensitive financial figures?",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    lineHeight = 15.sp
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
-                                ) {
-                                    TextButton(onClick = { showBiometricConsentPrompt = false }) {
-                                        Text("No, Use PIN", fontSize = 12.sp)
-                                    }
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Button(
-                                        onClick = {
-                                            sharedPrefs.edit().putBoolean(KEY_BIOMETRIC_CONSENT, true).apply()
-                                            isBiometricEnabled = true
-                                            showBiometricConsentPrompt = false
-                                            launchDeviceUnlock()
-                                        },
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text("Enable & Scan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Prompt affordance to enable fingerprint
-                        OutlinedButton(
-                            onClick = { showBiometricConsentPrompt = true },
-                            modifier = Modifier.fillMaxWidth().height(44.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Fingerprint,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Enable Fingerprint Authentication",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-
-                // PIN Input Field
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    OutlinedTextField(
-                        value = pinInput,
-                        onValueChange = {
-                            if (it.length <= 6 && it.all { char -> char.isDigit() }) {
-                                pinInput = it
-                                errorMessage = null
-                                // Auto-submit on exact match if entered
-                                val target = if (expectedPin.isNotBlank()) expectedPin else "1234"
-                                if (it == target) {
-                                    onAuthenticated()
-                                }
-                            }
-                        },
-                        label = { Text("Security PIN") },
-                        placeholder = { Text("Enter PIN") },
-                        leadingIcon = {
-                            Icon(imageVector = Icons.Default.Pin, contentDescription = null)
-                        },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("security_pin_input"),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true,
-                        isError = errorMessage != null
-                    )
-
-                    errorMessage?.let { err ->
-                        Text(
-                            text = err,
-                            color = ExpenseRed,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
                     }
 
-                    Text(
-                        text = "Enter your household security PIN to reveal sensitive figures.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val target = if (expectedPin.isNotBlank()) expectedPin else "1234"
-                            if (pinInput == target) {
-                                onAuthenticated()
-                            } else {
-                                errorMessage = "Incorrect security PIN. Please try again."
-                            }
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.testTag("security_pin_submit")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Verify & Reveal")
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (pinInput == expectedPin) {
+                                    onAuthenticated()
+                                } else {
+                                    errorMessage = "Incorrect security PIN. Please try again."
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("security_pin_submit")
+                        ) {
+                            Text("Verify & Reveal")
+                        }
                     }
                 }
             }

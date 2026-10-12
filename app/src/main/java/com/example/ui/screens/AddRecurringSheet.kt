@@ -42,8 +42,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChipDefaults
 import com.example.data.model.AccountEntity
 import com.example.data.model.HouseholdMember
+import com.example.data.model.JointMemberProfile
+import com.example.data.model.MemberProfile
 import com.example.data.model.PaymentMethod
 import com.example.data.model.RecurringTransactionEntity
 
@@ -60,11 +64,21 @@ enum class RecurringItemType(val label: String, val categoryDefault: String, val
 fun AddRecurringSheet(
     sheetState: SheetState,
     accounts: List<AccountEntity>,
+    members: List<MemberProfile> = emptyList(),
+    initialPaidByName: String? = null,
     onDismiss: () -> Unit,
     onSaveRecurring: (RecurringTransactionEntity) -> Unit,
     initialRule: RecurringTransactionEntity? = null
 ) {
     val isEditing = initialRule != null
+
+    val displayMembers = remember(members) {
+        if (members.isNotEmpty()) {
+            members + JointMemberProfile
+        } else {
+            listOf(JointMemberProfile)
+        }
+    }
 
     val initialType = remember(initialRule) {
         if (initialRule == null) RecurringItemType.LOAN_EMI
@@ -93,9 +107,12 @@ fun AddRecurringSheet(
         } else ""
         mutableStateOf(note)
     }
-    var paidBy by remember(initialRule) {
-        val member = HouseholdMember.values().find { it.name.equals(initialRule?.paidBy, ignoreCase = true) } ?: HouseholdMember.PRATIK
-        mutableStateOf(member)
+    var selectedPaidByName by remember(initialRule, displayMembers, initialPaidByName) {
+        val initialName = initialRule?.paidBy
+            ?: initialPaidByName?.takeIf { it.isNotBlank() }
+            ?: displayMembers.firstOrNull()?.displayName
+            ?: "Primary"
+        mutableStateOf(initialName)
     }
     var dueDay by remember(initialRule) { mutableIntStateOf(initialRule?.dueDay ?: 5) }
     var frequency by remember(initialRule) { mutableStateOf(initialRule?.frequency ?: "MONTHLY") }
@@ -222,19 +239,22 @@ fun AddRecurringSheet(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            // Member Selector: Primary / Partner / Joint
+            // Member Selector: Generalized for all household members
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(text = "Who Pays / Receives", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf(HouseholdMember.PRIMARY, HouseholdMember.PARTNER, HouseholdMember.JOINT).forEach { member ->
+                    displayMembers.forEach { member ->
+                        val isSelected = selectedPaidByName.equals(member.displayName, ignoreCase = true) ||
+                                selectedPaidByName.equals(member.id, ignoreCase = true)
                         FilterChip(
-                            selected = paidBy == member,
-                            onClick = { paidBy = member },
-                            label = { Text(member.displayName, fontSize = 12.sp) },
-                            modifier = Modifier.weight(1f)
+                            selected = isSelected,
+                            onClick = { selectedPaidByName = member.displayName },
+                            label = { Text(member.displayName, fontSize = 12.sp) }
                         )
                     }
                 }
@@ -303,11 +323,11 @@ fun AddRecurringSheet(
             Button(
                 onClick = {
                     val amount = amountText.toDoubleOrNull() ?: 0.0
-                    val userId = when (paidBy) {
-                        HouseholdMember.PRATIK -> 1L
-                        HouseholdMember.MANASVI -> 2L
-                        else -> null
+                    val matchedMember = displayMembers.find {
+                        it.displayName.equals(selectedPaidByName, ignoreCase = true) ||
+                        it.id.equals(selectedPaidByName, ignoreCase = true)
                     }
+                    val userId = matchedMember?.userId?.takeIf { it > 0 }
                     val finalPaymentMethod = if (selectedItemType.type == "INCOME") "Auto Credit" else paymentMethod.displayName
                     val finalCategory = if (selectedItemType == RecurringItemType.OTHER && customCategory.isNotBlank()) {
                         customCategory.trim()
@@ -324,7 +344,7 @@ fun AddRecurringSheet(
                             title = finalTitle,
                             amount = amount,
                             category = finalCategory,
-                            paidBy = paidBy.name,
+                            paidBy = selectedPaidByName,
                             type = selectedItemType.type,
                             nature = selectedItemType.nature,
                             dueDay = dueDay,
@@ -340,7 +360,7 @@ fun AddRecurringSheet(
                             title = finalTitle,
                             amount = amount,
                             category = finalCategory,
-                            paidBy = paidBy.name,
+                            paidBy = selectedPaidByName,
                             type = selectedItemType.type,
                             nature = selectedItemType.nature,
                             dueDay = dueDay,

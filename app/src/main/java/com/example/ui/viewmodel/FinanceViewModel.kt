@@ -9,6 +9,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.DatabaseInitializer
 import com.example.data.model.AccountEntity
 import com.example.data.model.CategoryBudgetEntity
+import com.example.data.model.CategoryConstants
 import com.example.data.model.ExpenseNature
 import com.example.data.model.FinancialGoalEntity
 import com.example.data.model.HouseholdEntity
@@ -22,6 +23,8 @@ import com.example.data.model.TransactionEntity
 import com.example.data.model.UserEntity
 import com.example.data.model.UserRole
 import com.example.data.model.toMemberProfile
+import com.example.data.model.matchesMember
+import com.example.data.model.isJoint
 import com.example.data.repository.FinanceRepository
 import com.example.data.sync.CloudSyncManager
 import com.example.util.CfoAdvisorEngine
@@ -144,11 +147,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val activeUserId: StateFlow<Long?> = _activeUserId.asStateFlow()
 
     val activeUser: StateFlow<UserEntity?> = combine(users, _activeUserId) { userList, selectedId ->
-        if (selectedId != null) {
-            userList.find { it.id == selectedId }
-        } else {
-            userList.find { it.role.equals("ADMIN", ignoreCase = true) } ?: userList.firstOrNull()
-        }
+        val savedUser = if (selectedId != null) userList.find { it.id == selectedId } else null
+        savedUser ?: userList.find { it.role.equals("ADMIN", ignoreCase = true) } ?: userList.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val activeUserRole: StateFlow<UserRole> = activeUser.map { user ->
@@ -161,6 +161,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Active Data Flows from Room
+    val currentMonthAllTransactions: StateFlow<List<TransactionEntity>> = combine(
+        _selectedMonth,
+        database.transactionDao().getAllTransactions()
+    ) { month, allTx ->
+        allTx.filter { it.monthYear == month }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val allTransactions: StateFlow<List<TransactionEntity>> = combine(
         _selectedMonth,
         _selectedMemberName,
@@ -169,8 +176,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         allTx.filter { tx ->
             val monthMatches = tx.monthYear == month
             val memberMatches = memberName == null ||
-                tx.paidBy.equals(memberName, ignoreCase = true) ||
-                tx.paidBy.equals("JOINT", ignoreCase = true)
+                matchesMember(tx.paidBy, memberName, memberProfiles.value) ||
+                isJoint(tx.paidBy)
             monthMatches && memberMatches
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -189,10 +196,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         database.transactionDao().getAllTransactions(),
         recurringRules,
         budgets,
-        household,
-        _selectedMonth
-    ) { allTx, rules, budgetList, h, month ->
-        computeMonthSummary(month, allTx, rules, budgetList, h)
+        _selectedMonth,
+        memberProfiles
+    ) { allTx, rules, budgetList, month, members ->
+        computeMonthSummary(month, allTx, rules, budgetList, household.value, members)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -227,76 +234,65 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         allTx: List<TransactionEntity>,
         rules: List<RecurringRuleEntity>,
         budgetList: List<CategoryBudgetEntity>,
-        h: HouseholdEntity? = null
+        h: HouseholdEntity? = null,
+        members: List<MemberProfile> = emptyList()
     ): MonthSummary {
         val monthTx = allTx.filter { it.monthYear == month }
+        val mInt = month.substringAfter("-").toIntOrNull() ?: 10
 
-        // Expected or actual income for the month
+        // Expected or actual income for the month:
+        // Every explicit recorded income transaction across all members is counted.
+        // Plus any scheduled income rules that haven't yet been realized as a transaction for this month.
         val txIncomes = monthTx.filter { it.type == "INCOME" }.sumOf { it.amount }
-        val ruleIncomes = rules.filter { it.type == "INCOME" && it.isActive }.sumOf { it.amount }
-        val totalIncome = if (txIncomes > 0) maxOf(txIncomes, ruleIncomes) else ruleIncomes
+        val pendingMonthIncomes = rules.filter { rule ->
+            rule.type == "INCOME" && rule.isActive &&
+            monthTx.none { it.recurringRuleId == rule.id || (matchesMember(it.paidBy, rule.paidBy, members) && it.merchant.equals(rule.title, ignoreCase = true)) }
+        }.sumOf { rule ->
+            if (rule.frequency == "ANNUAL") {
+                if (rule.dueMonth == mInt) rule.amount else 0.0
+            } else rule.amount
+        }
+        val totalIncome = txIncomes + pendingMonthIncomes
 
-        // Scheduled Commitments
-        val ruleCommitments = rules.filter { it.nature == "CORE_COMMITMENT" && it.type == "EXPENSE" && it.isActive }
+        // Scheduled Commitments across all categories (EMIs, loans, rent, bills, insurance):
+        // 1. All active recurring expense rules
+        val activeRuleCommitments = rules.filter { it.type == "EXPENSE" && it.isActive && !CategoryConstants.isInvestment(it.category, it.type, it.nature) }
             .sumOf { rule ->
                 if (rule.frequency == "ANNUAL") {
-                    val mInt = month.substringAfter("-").toIntOrNull() ?: 10
                     if (rule.dueMonth == mInt) rule.amount else 0.0
                 } else rule.amount
             }
+        // 2. Plus any explicit expense transactions that are EMIs / core commitments not linked to active rules
+        val unlinkedCommitmentTx = monthTx.filter { tx ->
+            tx.type == "EXPENSE" && CategoryConstants.isCommitment(tx.category, tx.nature, tx.recurringRuleId, tx.merchant) &&
+            (tx.recurringRuleId == null || rules.none { r -> r.id == tx.recurringRuleId && r.isActive })
+        }.sumOf { it.amount }
+        val ruleCommitments = activeRuleCommitments + unlinkedCommitmentTx
 
-        // Random / Discretionary expenses
-        val randomExpenses = monthTx.filter { it.type == "EXPENSE" && it.nature == "DISCRETIONARY" }
-            .sumOf { it.amount }
+        // Investments (SIP + NPS):
+        val activeRuleInvestments = rules.filter { it.isActive && CategoryConstants.isInvestment(it.category, it.type, it.nature) }
+            .sumOf { rule ->
+                if (rule.frequency == "ANNUAL") {
+                    if (rule.dueMonth == mInt) rule.amount else 0.0
+                } else rule.amount
+            }
+        val unlinkedInvestmentTx = monthTx.filter { tx ->
+            CategoryConstants.isInvestment(tx.category, tx.type, tx.nature) &&
+            (tx.recurringRuleId == null || rules.none { r -> r.id == tx.recurringRuleId && r.isActive })
+        }.sumOf { it.amount }
+        val investments = activeRuleInvestments + unlinkedInvestmentTx
 
-        // Investments (SIP + NPS)
-        val investments = rules.filter { it.type == "INVESTMENT" && it.isActive }.sumOf { it.amount }
+        // Random / Discretionary Expenses:
+        // All expense transactions spent in the month across all members that are NOT core commitments or investments
+        val randomExpenses = monthTx.filter { tx ->
+            tx.type == "EXPENSE" &&
+            !CategoryConstants.isCommitment(tx.category, tx.nature, tx.recurringRuleId, tx.merchant) &&
+            !CategoryConstants.isInvestment(tx.category, tx.type, tx.nature)
+        }.sumOf { it.amount }
 
-        // Available Cash Flow calculated based on current date of the month:
-        // What has actually debited and credited up to the current day
-        val calNow = Calendar.getInstance()
-        val currentYearMonth = String.format(Locale.US, "%04d-%02d", calNow.get(Calendar.YEAR), calNow.get(Calendar.MONTH) + 1)
-        val currentDay = calNow.get(Calendar.DAY_OF_MONTH)
-        val isCurrentMonth = month == currentYearMonth
-        val isPastMonth = month < currentYearMonth
-
-        val availableBalance = if (isCurrentMonth) {
-            // Realized income up to today: recorded income transactions + active income rules due on/before today not yet recorded
-            val realizedIncome = monthTx.filter { it.type == "INCOME" }.sumOf { it.amount } +
-                rules.filter { rule ->
-                    rule.type == "INCOME" && rule.isActive && rule.dueDay <= currentDay &&
-                    monthTx.none { it.recurringRuleId == rule.id || it.merchant.equals(rule.title, ignoreCase = true) }
-                }.sumOf { it.amount }
-
-            // Scheduled expenses debited up to today: recorded scheduled expense transactions + rules due on/before today not yet recorded
-            val debitedScheduled = monthTx.filter { it.type == "EXPENSE" && (it.isRecurring || it.nature == "CORE_COMMITMENT") }.sumOf { it.amount } +
-                rules.filter { rule ->
-                    rule.nature == "CORE_COMMITMENT" && rule.type == "EXPENSE" && rule.isActive && rule.dueDay <= currentDay &&
-                    monthTx.none { it.recurringRuleId == rule.id || it.merchant.equals(rule.title, ignoreCase = true) }
-                }.sumOf { rule ->
-                    if (rule.frequency == "ANNUAL") {
-                        val mInt = month.substringAfter("-").toIntOrNull() ?: 10
-                        if (rule.dueMonth == mInt) rule.amount else 0.0
-                    } else rule.amount
-                }
-
-            // Investments debited up to today
-            val debitedInvestments = monthTx.filter { it.type == "INVESTMENT" || (it.nature == "INVESTMENT" && it.type == "EXPENSE") }.sumOf { it.amount } +
-                rules.filter { rule ->
-                    rule.type == "INVESTMENT" && rule.isActive && rule.dueDay <= currentDay &&
-                    monthTx.none { it.recurringRuleId == rule.id || it.merchant.equals(rule.title, ignoreCase = true) }
-                }.sumOf { it.amount }
-
-            realizedIncome - (debitedScheduled + debitedInvestments + randomExpenses)
-        } else if (isPastMonth) {
-            // In past months, all scheduled items and transactions have concluded
-            totalIncome - (ruleCommitments + randomExpenses + investments)
-        } else {
-            // Future month: only explicit pre-recorded transactions
-            val futIncome = monthTx.filter { it.type == "INCOME" }.sumOf { it.amount }
-            val futExpense = monthTx.filter { it.type == "EXPENSE" }.sumOf { it.amount }
-            futIncome - futExpense
-        }
+        // Available Cash Flow calculated based on current month:
+        // Incomes tally positively, Scheduled commitments, spent expenses & SIPs tally negatively
+        val availableBalance = totalIncome - (ruleCommitments + randomExpenses + investments)
 
         val discretionaryBudget = h?.monthlyDiscretionaryBudget?.takeIf { it > 0 }
             ?: budgetList.sumOf { it.monthlyBudget }.takeIf { it > 0 }
@@ -470,6 +466,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
             val validAccountId = if (accountId != null && accountId > 0) accountId else null
 
+            val actualNature = if (CategoryConstants.isCommitment(categoryName = category, merchant = merchant)) ExpenseNature.CORE_COMMITMENT.name
+                               else if (CategoryConstants.isInvestment(category)) ExpenseNature.INVESTMENT.name
+                               else nature.name
+
             val tx = TransactionEntity(
                 householdId = 1L,
                 userId = userId,
@@ -483,7 +483,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 notes = notes.trim(),
                 timestamp = timestamp,
                 monthYear = monthYear,
-                nature = nature.name,
+                nature = actualNature,
                 type = "EXPENSE",
                 isRecurring = false
             )
@@ -563,6 +563,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val id = repository.insertTransaction(tx)
             val code = household.value?.inviteCode?.ifBlank { "CFO-8821" } ?: "CFO-8821"
             cloudSyncManager.pushTransaction(tx.copy(id = id), code, viewModelScope)
+            _selectedMonth.value = monthYear
             closeAddIncome()
         }
     }
@@ -597,6 +598,14 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             repository.deleteTransaction(transaction)
             val code = household.value?.inviteCode?.ifBlank { "CFO-8821" } ?: "CFO-8821"
             cloudSyncManager.deleteTransaction(transaction.id, code, viewModelScope)
+        }
+    }
+
+    fun updateTransaction(transaction: TransactionEntity) {
+        viewModelScope.launch {
+            repository.updateTransaction(transaction)
+            val code = household.value?.inviteCode?.ifBlank { "CFO-8821" } ?: "CFO-8821"
+            cloudSyncManager.pushTransaction(transaction, code, viewModelScope)
         }
     }
 
@@ -673,7 +682,19 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun updateMemberRole(userId: Long, newRole: String) {
+    fun verifyHouseholdPin(pin: String): Boolean {
+        val expected = household.value?.securityPin?.trim()?.ifBlank { "1234" } ?: "1234"
+        return pin.trim() == expected
+    }
+
+    fun updateMemberRole(userId: Long, newRole: String, pin: String = "") {
+        // Enforce security: Promoting to ADMIN requires valid PIN
+        if (newRole.equals("ADMIN", ignoreCase = true)) {
+            val expectedPin = household.value?.securityPin?.trim()?.ifBlank { "1234" } ?: "1234"
+            if (pin.trim() != expectedPin) {
+                return
+            }
+        }
         viewModelScope.launch {
             repository.updateUserRole(userId, newRole)
             val user = users.value.find { it.id == userId }
@@ -816,6 +837,19 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Update household security PIN
+     */
+    fun updateHouseholdSecurityPin(newPin: String) {
+        val clean = newPin.trim()
+        viewModelScope.launch {
+            val h = repository.getPrimaryHousehold() ?: return@launch
+            val updated = h.copy(securityPin = clean)
+            repository.updateHousehold(updated)
+            cloudSyncManager.publishHousehold(updated, viewModelScope)
+        }
+    }
+
+    /**
      * Join an existing household using an Invite Code
      */
     fun joinHousehold(inviteCode: String, memberName: String, onResult: (Boolean, String) -> Unit) {
@@ -857,16 +891,29 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val user = activeUser.value ?: users.value.firstOrNull()
         val memberName = user?.name ?: "Primary"
         val acc = accounts.value.find { it.holder.equals(memberName, ignoreCase = true) }
-        addExpense(
-            amount = st.amount,
-            category = st.category,
-            paidBy = memberName,
-            paymentMethod = st.paymentMethod,
-            accountId = acc?.id,
-            accountName = acc?.name ?: "Primary Account",
-            merchant = st.merchant,
-            notes = "Smart parsed: ${st.rawText.take(40)}..."
-        )
+        if (st.type == "INCOME") {
+            addIncome(
+                amount = st.amount,
+                category = st.category,
+                paidBy = memberName,
+                paymentMethod = st.paymentMethod,
+                accountId = acc?.id,
+                accountName = acc?.name ?: "Primary Account",
+                source = st.merchant,
+                notes = "Smart parsed credit: ${st.rawText.take(60)}"
+            )
+        } else {
+            addExpense(
+                amount = st.amount,
+                category = st.category,
+                paidBy = memberName,
+                paymentMethod = st.paymentMethod,
+                accountId = acc?.id,
+                accountName = acc?.name ?: "Primary Account",
+                merchant = st.merchant,
+                notes = "Smart parsed debit: ${st.rawText.take(60)}"
+            )
+        }
         closeSmartDetect()
     }
 
@@ -876,16 +923,29 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val user = activeUser.value ?: users.value.firstOrNull()
             val memberName = user?.name ?: "Primary"
             val acc = accounts.value.find { it.holder.equals(memberName, ignoreCase = true) }
-            addExpense(
-                amount = parsed.amount,
-                category = parsed.category,
-                paidBy = memberName,
-                paymentMethod = parsed.paymentMethod,
-                accountId = acc?.id,
-                accountName = acc?.name ?: "Primary Account",
-                merchant = parsed.merchant,
-                notes = "Auto-captured from ${item.appName}: ${item.body.take(60)}"
-            )
+            if (parsed.type == "INCOME") {
+                addIncome(
+                    amount = parsed.amount,
+                    category = parsed.category,
+                    paidBy = memberName,
+                    paymentMethod = parsed.paymentMethod,
+                    accountId = acc?.id,
+                    accountName = acc?.name ?: "Primary Account",
+                    source = parsed.merchant,
+                    notes = "Auto-captured credit from ${item.appName}: ${item.body.take(60)}"
+                )
+            } else {
+                addExpense(
+                    amount = parsed.amount,
+                    category = parsed.category,
+                    paidBy = memberName,
+                    paymentMethod = parsed.paymentMethod,
+                    accountId = acc?.id,
+                    accountName = acc?.name ?: "Primary Account",
+                    merchant = parsed.merchant,
+                    notes = "Auto-captured debit from ${item.appName}: ${item.body.take(60)}"
+                )
+            }
             com.example.service.SmartNotificationManager.markNotificationSaved(item.id)
         }
     }
@@ -1005,7 +1065,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val currentMonthStr = String.format(Locale.US, "%04d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
             val activeMonth = _selectedMonth.value
 
-            val rules = recurringRules.value
+            val rules = repository.getAllRecurringRules().first()
             rules.filter { it.isActive }.forEach { rule ->
                 // Check if rule's due day has arrived for current month or if viewing a past month
                 val shouldAutoRecord = when {

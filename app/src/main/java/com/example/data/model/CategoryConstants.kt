@@ -74,9 +74,33 @@ object CategoryConstants {
         "Groceries",
         "Fuel & Travel",
         "Shopping",
-        "Entertainment",
+        "Home Loan / EMI",
+        "Personal Loan / EMI",
         "Utilities & Bills",
         "Medical & Healthcare",
+        "Entertainment",
         "Miscellaneous"
     )
+
+    fun isCommitment(categoryName: String, nature: String = "", recurringRuleId: Long? = null, merchant: String = ""): Boolean {
+        if (nature.equals("CORE_COMMITMENT", ignoreCase = true)) return true
+        if (recurringRuleId != null && recurringRuleId > 0) return true
+        val meta = getMeta(categoryName)
+        if (meta.defaultNature == ExpenseNature.CORE_COMMITMENT) return true
+        val c = categoryName.lowercase()
+        val m = merchant.lowercase()
+        return c.contains("loan") || c.contains("emi") || c.contains("rent") ||
+               c.contains("insurance") || c.contains("lic") || c.contains("mortgage") ||
+               m.contains("loan") || m.contains("emi") || m.contains("mortgage")
+    }
+
+    fun isInvestment(categoryName: String, type: String = "", nature: String = ""): Boolean {
+        if (type.equals("INVESTMENT", ignoreCase = true) || nature.equals("INVESTMENT", ignoreCase = true)) return true
+        val meta = getMeta(categoryName)
+        if (meta.defaultNature == ExpenseNature.INVESTMENT) return true
+        val c = categoryName.lowercase()
+        return c.contains("sip") || c.contains("mutual fund") || c.contains("nps") || c.contains("investment")
+    }
+
+    val ALL_EXPENSE_CATEGORIES: List<String> = ALL_CATEGORIES.filter { it.group != INCOME }.map { it.name }
 }

@@ -23,11 +23,12 @@ enum class HouseholdMember(
         val PRATIK = PRIMARY
         val MANASVI = PARTNER
 
-        fun fromId(id: String?): HouseholdMember =
-            entries.find {
+        fun fromId(id: String?): HouseholdMember? =
+            if (id == null) null
+            else entries.find {
                 it.id.equals(id, ignoreCase = true) ||
-                (it == PRIMARY && id?.equals("PRATIK", ignoreCase = true) == true) ||
-                (it == PARTNER && id?.equals("MANASVI", ignoreCase = true) == true)
+                (it == PRIMARY && id.equals("PRATIK", ignoreCase = true)) ||
+                (it == PARTNER && id.equals("MANASVI", ignoreCase = true))
             } ?: JOINT
     }
 }
@@ -115,4 +116,40 @@ fun UserEntity.toMemberProfile(): MemberProfile {
         userId = id,
         email = email
     )
+}
+
+fun matchesMember(paidBy: String?, memberName: String?, members: List<MemberProfile> = emptyList()): Boolean {
+    if (paidBy.isNullOrBlank() || memberName.isNullOrBlank()) return false
+    val p = paidBy.trim().uppercase()
+    val m = memberName.trim().uppercase()
+
+    // Joint is shared across all members, never mapped to a single individual member
+    if (isJoint(p) || isJoint(m)) return false
+
+    if (p == m) return true
+
+    // Check against members list if available
+    if (members.isNotEmpty()) {
+        val target = members.find { it.displayName.equals(memberName, ignoreCase = true) || it.id.equals(memberName, ignoreCase = true) }
+        val payer = members.find { it.displayName.equals(paidBy, ignoreCase = true) || it.id.equals(paidBy, ignoreCase = true) }
+        if (target != null && payer != null && target.userId > 0 && target.userId == payer.userId) return true
+        if (target != null && (p == "PRIMARY" || p == "ADMIN") && target.userRole == UserRole.ADMIN) return true
+        if (payer != null && (m == "PRIMARY" || m == "ADMIN") && payer.userRole == UserRole.ADMIN) return true
+        if (target != null && (p == "PARTNER" || p == "SPOUSE" || p == "MEMBER" || p == "CONTRIBUTOR") && target.userRole != UserRole.ADMIN) return true
+        if (payer != null && (m == "PARTNER" || m == "SPOUSE" || m == "MEMBER" || m == "CONTRIBUTOR") && payer.userRole != UserRole.ADMIN) return true
+    }
+
+    if (p == "PRIMARY" && (m == "PRATIK" || m == "ADMIN")) return true
+    if (m == "PRIMARY" && (p == "PRATIK" || p == "ADMIN")) return true
+    if (p == "PARTNER" && (m == "MANASVI" || m == "PARTNER")) return true
+    if (m == "PARTNER" && (p == "MANASVI" || p == "PARTNER")) return true
+    if (p.startsWith(m) || m.startsWith(p)) return true
+    if (p.contains(m) || m.contains(p)) return true
+    return false
+}
+
+fun isJoint(paidBy: String?): Boolean {
+    if (paidBy.isNullOrBlank()) return false
+    val p = paidBy.trim().uppercase()
+    return p == "JOINT" || p.contains("JOINT") || p.contains("HOUSEHOLD") || p.contains("SHARED")
 }

@@ -77,7 +77,8 @@ fun ReportsScreen(
     onExportCsv: () -> String,
     onResetDatabase: (Boolean) -> Unit = {},
     currentUserRole: UserRole = UserRole.ADMIN,
-    expectedPin: String = "1234",
+    expectedPin: String = "",
+    onSetPin: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -565,6 +566,7 @@ fun ReportsScreen(
             title = "Admin Security Required",
             subtitle = "Authenticate with biometric or PIN to confirm resetting database tables.",
             expectedPin = expectedPin,
+            onSetPin = onSetPin,
             onAuthenticated = {
                 showAuthDialogForReset = false
                 showResetDialog = true

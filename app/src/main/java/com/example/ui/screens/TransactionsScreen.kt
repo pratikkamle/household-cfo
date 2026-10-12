@@ -54,8 +54,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.AccountEntity
+import com.example.data.model.MemberProfile
 import com.example.data.model.TransactionEntity
 import com.example.data.model.UserRole
+import com.example.ui.screens.EditTransactionDialog
 import com.example.ui.theme.ExpenseRed
 import com.example.util.CurrencyFormatter
 import kotlin.math.ceil
@@ -66,11 +69,15 @@ fun TransactionsScreen(
     onOpenAddExpense: () -> Unit,
     onDeleteTransaction: (TransactionEntity) -> Unit,
     currentUserRole: UserRole = UserRole.ADMIN,
+    accounts: List<AccountEntity> = emptyList(),
+    members: List<MemberProfile> = emptyList(),
+    onUpdateTransaction: (TransactionEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf("ALL") } // "ALL", "EXPENSE", "INCOME"
     var transactionToDelete by remember { mutableStateOf<TransactionEntity?>(null) }
+    var transactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
     var currentPage by remember { mutableIntStateOf(0) }
     val pageSize = 12
 
@@ -249,8 +256,10 @@ fun TransactionsScreen(
             items(paged, key = { it.id }) { tx ->
                 TransactionCard(
                     transaction = tx,
+                    onEdit = { transactionToEdit = tx },
                     onDelete = { transactionToDelete = tx },
-                    canDelete = currentUserRole.canAddTransactions
+                    canDelete = currentUserRole.canAddTransactions,
+                    canEdit = currentUserRole.canAddTransactions
                 )
             }
 
@@ -325,6 +334,19 @@ fun TransactionsScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    if (transactionToEdit != null) {
+        EditTransactionDialog(
+            transaction = transactionToEdit!!,
+            accounts = accounts,
+            members = members,
+            onSave = { updated ->
+                onUpdateTransaction(updated)
+                transactionToEdit = null
+            },
+            onDismiss = { transactionToEdit = null }
         )
     }
 }

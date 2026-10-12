@@ -73,11 +73,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.material3.AlertDialog
 import com.example.data.model.HouseholdEntity
 import com.example.data.model.MemberColorPalette
 import com.example.data.model.MemberProfile
 import com.example.data.model.UserEntity
 import com.example.data.model.UserRole
+import com.example.data.model.parseHexColor
 import com.example.data.sync.SyncState
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
@@ -126,6 +130,14 @@ fun HouseholdHubDialog(
 
     var isEditingName by remember { mutableStateOf(false) }
     var editedHouseholdName by remember { mutableStateOf(currentHouseholdName) }
+
+    var memberPendingAdminPromotion by remember { mutableStateOf<MemberProfile?>(null) }
+    var adminPinInput by remember { mutableStateOf("") }
+    var adminPinError by remember { mutableStateOf<String?>(null) }
+
+    var userPendingAdminSwitch by remember { mutableStateOf<UserEntity?>(null) }
+    var switchAdminPinInput by remember { mutableStateOf("") }
+    var switchAdminPinError by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -205,23 +217,24 @@ fun HouseholdHubDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "YOUR PROFILE:",
+                                    text = "ACTIVE PROFILE:",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
                                     text = "${activeUser?.name ?: "Member"} • Role: ${currentUserRole.displayName}",
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            // Only Admin can test switching active roles; Members & Contributors cannot escalate privileges
-                            if (currentUserRole == UserRole.ADMIN) {
+
+                            if (users.size > 1) {
                                 Text(
-                                    text = "Admin Mode: switch active profile to verify permissions:",
+                                    text = "Tap to switch active profile:",
                                     fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Row(
@@ -231,26 +244,48 @@ fun HouseholdHubDialog(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     users.forEach { u ->
-                                        val isCurrent = activeUser?.id == u.id
+                                        val isSelected = (activeUser?.id == u.id)
                                         FilterChip(
-                                            selected = isCurrent,
-                                            onClick = { onSelectActiveUser(u) },
-                                            label = { Text("${u.name} (${u.role})", fontSize = 12.sp) },
+                                            selected = isSelected,
+                                            onClick = {
+                                                if (u.role.equals("ADMIN", ignoreCase = true) && activeUser?.id != u.id) {
+                                                    userPendingAdminSwitch = u
+                                                    switchAdminPinInput = ""
+                                                    switchAdminPinError = null
+                                                } else {
+                                                    onSelectActiveUser(u)
+                                                }
+                                            },
+                                            label = { Text("${u.name} (${u.role})", fontSize = 11.sp) },
                                             leadingIcon = {
                                                 Box(
                                                     modifier = Modifier
                                                         .size(16.dp)
                                                         .clip(CircleShape)
-                                                        .background(Color(android.graphics.Color.parseColor(u.colorHex))),
+                                                        .background(parseHexColor(u.colorHex)),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Text(u.initial, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        text = u.initial.ifBlank { u.name.take(1) },
+                                                        color = Color.White,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
                                                 }
                                             }
                                         )
                                     }
                                 }
                             }
+
+                            Text(
+                                text = if (currentUserRole == UserRole.ADMIN) 
+                                    "You are logged in as Admin. Role management and administrative changes require Security PIN."
+                                else
+                                    "You are logged in as ${currentUserRole.displayName}. Administrative settings are read-only.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -618,7 +653,7 @@ fun HouseholdHubDialog(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 // Role Badge (Clickable for Admin to Promote/Demote OTHER members)
-                                val canAdminEditThis = currentUserRole == UserRole.ADMIN && (activeUser == null || member.userId != activeUser.id)
+                                val canAdminEditThis = currentUserRole == UserRole.ADMIN && (activeUser != null && member.userId != activeUser.id)
                                 Box {
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
@@ -682,9 +717,11 @@ fun HouseholdHubDialog(
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("Promote to Admin (Full Control)") },
+                                            text = { Text("🔒 Promote to Admin (Requires PIN)") },
                                             onClick = {
-                                                onUpdateMemberRole(member.userId, "ADMIN")
+                                                memberPendingAdminPromotion = member
+                                                adminPinInput = ""
+                                                adminPinError = null
                                                 showRoleMenu = false
                                             }
                                         )
@@ -814,5 +851,181 @@ fun HouseholdHubDialog(
                 }
             }
         }
+    }
+
+    // Admin Promotion PIN Authorization Dialog
+    if (memberPendingAdminPromotion != null) {
+        val target = memberPendingAdminPromotion!!
+        AlertDialog(
+            onDismissRequest = {
+                memberPendingAdminPromotion = null
+                adminPinInput = ""
+                adminPinError = null
+            },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Authorize Admin Promotion",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Promoting '${target.displayName}' to Admin grants full control over household members, financial data, and security rules.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Enter the 4-digit Household Security PIN to authorize this change:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = adminPinInput,
+                        onValueChange = {
+                            if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
+                                adminPinInput = it
+                                adminPinError = null
+                            }
+                        },
+                        label = { Text("Admin PIN") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                        isError = adminPinError != null,
+                        supportingText = adminPinError?.let { { Text(it, color = ExpenseRed) } },
+                        modifier = Modifier.fillMaxWidth().testTag("admin_promotion_pin_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val expectedPin = household?.securityPin?.ifBlank { "1234" } ?: "1234"
+                        if (adminPinInput == expectedPin) {
+                            onUpdateMemberRole(target.userId, "ADMIN")
+                            Toast.makeText(context, "${target.displayName} promoted to Admin!", Toast.LENGTH_SHORT).show()
+                            memberPendingAdminPromotion = null
+                            adminPinInput = ""
+                            adminPinError = null
+                        } else {
+                            adminPinError = "Incorrect Security PIN. Admin promotion denied."
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_admin_promotion_btn")
+                ) {
+                    Text("Authorize Admin")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        memberPendingAdminPromotion = null
+                        adminPinInput = ""
+                        adminPinError = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Admin Persona Switch PIN Authorization Dialog
+    if (userPendingAdminSwitch != null) {
+        val target = userPendingAdminSwitch!!
+        AlertDialog(
+            onDismissRequest = {
+                userPendingAdminSwitch = null
+                switchAdminPinInput = ""
+                switchAdminPinError = null
+            },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Admin Access Authorization",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Switching to '${target.name}' grants Administrator authority over household finances, accounts, and member roles.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Enter the 4-digit Household Security PIN to switch to Admin:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = switchAdminPinInput,
+                        onValueChange = {
+                            if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
+                                switchAdminPinInput = it
+                                switchAdminPinError = null
+                            }
+                        },
+                        label = { Text("Household Security PIN") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                        isError = switchAdminPinError != null,
+                        supportingText = switchAdminPinError?.let { { Text(it, color = ExpenseRed) } },
+                        modifier = Modifier.fillMaxWidth().testTag("admin_switch_pin_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val expectedPin = household?.securityPin?.ifBlank { "1234" } ?: "1234"
+                        if (switchAdminPinInput == expectedPin) {
+                            onSelectActiveUser(target)
+                            Toast.makeText(context, "Switched to ${target.name} (Admin)", Toast.LENGTH_SHORT).show()
+                            userPendingAdminSwitch = null
+                            switchAdminPinInput = ""
+                            switchAdminPinError = null
+                        } else {
+                            switchAdminPinError = "Incorrect Security PIN. Admin access denied."
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_admin_switch_btn")
+                ) {
+                    Text("Verify & Switch")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        userPendingAdminSwitch = null
+                        switchAdminPinInput = ""
+                        switchAdminPinError = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

@@ -61,6 +61,7 @@ import com.example.service.SmartNotificationManager
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
+import com.example.ui.theme.IncomeGreen
 import com.example.ui.theme.GoldAccent
 import com.example.util.CurrencyFormatter
 import com.example.util.ParsedTransaction
@@ -342,10 +343,10 @@ fun SmartDetectDialog(
                                                     }
                                                 }
                                                 Text(
-                                                    text = CurrencyFormatter.formatInr(parsed.amount),
+                                                    text = "${if (parsed.type == "INCOME") "+" else "-"}${CurrencyFormatter.formatInr(parsed.amount)}",
                                                     fontWeight = FontWeight.Bold,
                                                     fontSize = 14.sp,
-                                                    color = ExpenseRed
+                                                    color = if (parsed.type == "INCOME") IncomeGreen else ExpenseRed
                                                 )
                                             }
                                         }
@@ -468,10 +469,10 @@ fun SmartDetectDialog(
                                     }
                                 }
                                 Text(
-                                    text = CurrencyFormatter.formatInr(parsedTransaction.amount),
+                                    text = "${if (parsedTransaction.type == "INCOME") "+" else "-"}${CurrencyFormatter.formatInr(parsedTransaction.amount)}",
                                     fontSize = 20.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = ExpenseRed
+                                    color = if (parsedTransaction.type == "INCOME") IncomeGreen else ExpenseRed
                                 )
                             }
 

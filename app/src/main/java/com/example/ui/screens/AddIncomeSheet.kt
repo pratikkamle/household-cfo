@@ -58,6 +58,7 @@ import com.example.ui.theme.IncomeGreen
 fun AddIncomeSheet(
     accounts: List<AccountEntity>,
     members: List<MemberProfile> = emptyList(),
+    initialPaidByName: String? = null,
     onSave: (
         amount: Double,
         category: String,
@@ -83,7 +84,12 @@ fun AddIncomeSheet(
     var amountText by remember { mutableStateOf("") }
     var sourceText by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Salary") }
-    var selectedPaidByName by remember(displayMembers) { mutableStateOf(displayMembers.firstOrNull()?.displayName ?: "Primary") }
+    var selectedPaidByName by remember(displayMembers, initialPaidByName) {
+        val defaultPayer = initialPaidByName?.takeIf { it.isNotBlank() }
+            ?: displayMembers.firstOrNull()?.displayName
+            ?: "Primary"
+        mutableStateOf(defaultPayer)
+    }
     var selectedPaymentMethod by remember { mutableStateOf(PaymentMethod.NET_BANKING) }
     var notesText by remember { mutableStateOf("") }
 

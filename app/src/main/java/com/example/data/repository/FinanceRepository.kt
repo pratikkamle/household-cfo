@@ -97,6 +97,36 @@ class FinanceRepository(
         return id
     }
 
+    suspend fun updateTransaction(newTx: TransactionEntity) {
+        val oldTx = transactionDao.getTransactionById(newTx.id)
+        transactionDao.updateTransaction(newTx)
+
+        // Reconcile account balances if account or amount/type changed
+        if (oldTx != null) {
+            val oldAccId = oldTx.accountId
+            if (oldAccId != null && oldAccId > 0) {
+                val oldReversal = when (oldTx.type) {
+                    "INCOME" -> -oldTx.amount
+                    "EXPENSE" -> oldTx.amount
+                    "INVESTMENT" -> oldTx.amount
+                    else -> 0.0
+                }
+                accountDao.updateBalance(oldAccId, oldReversal)
+            }
+
+            val newAccId = newTx.accountId
+            if (newAccId != null && newAccId > 0) {
+                val newDelta = when (newTx.type) {
+                    "INCOME" -> newTx.amount
+                    "EXPENSE" -> -newTx.amount
+                    "INVESTMENT" -> -newTx.amount
+                    else -> 0.0
+                }
+                accountDao.updateBalance(newAccId, newDelta)
+            }
+        }
+    }
+
     suspend fun deleteTransaction(transaction: TransactionEntity) {
         transactionDao.deleteTransactionById(transaction.id)
         val accId = transaction.accountId
