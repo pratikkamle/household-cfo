@@ -107,6 +107,7 @@ fun HouseholdHubDialog(
     onJoinHousehold: (inviteCode: String, memberName: String, onResult: (Boolean, String) -> Unit) -> Unit,
     onOpenEditBudgetPlan: () -> Unit,
     onSignInWithGoogle: (Activity) -> Unit,
+    onSignOut: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -445,12 +446,23 @@ fun HouseholdHubDialog(
                                     color = if (syncState is SyncState.Live) Emerald500 else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (currentUser == null && activity != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (currentUser == null && activity != null) {
+                                    TextButton(
+                                        onClick = { onSignInWithGoogle(activity) },
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("Sign In", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                                 TextButton(
-                                    onClick = { onSignInWithGoogle(activity) },
-                                    modifier = Modifier.height(30.dp)
+                                    onClick = onSignOut,
+                                    modifier = Modifier.height(30.dp).testTag("hub_btn_logout")
                                 ) {
-                                    Text("Sign In", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("Logout", fontSize = 11.sp, color = ExpenseRed, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }

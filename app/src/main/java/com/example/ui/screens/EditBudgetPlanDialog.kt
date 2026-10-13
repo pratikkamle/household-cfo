@@ -210,11 +210,30 @@ fun EditBudgetPlanDialog(
                                     singleLine = true,
                                     prefix = { Text("₹ ", fontWeight = FontWeight.Bold) }
                                 )
-                                Text(
-                                    text = "Current category allocations sum: ${CurrencyFormatter.formatInr(sumOfCategories)}",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Allocated sum: ${CurrencyFormatter.formatInr(sumOfCategories)}",
+                                        fontSize = 11.sp,
+                                        color = if (kotlin.math.abs(sumOfCategories - (totalBudgetText.toDoubleOrNull() ?: 0.0)) > 1.0) MaterialTheme.colorScheme.primary else Emerald500,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    androidx.compose.material3.TextButton(
+                                        onClick = {
+                                            val target = totalBudgetText.toDoubleOrNull() ?: 30000.0
+                                            val scaled = com.example.util.CategoryBudgetScaler.scaleBudgets(target)
+                                            scaled.forEach { b ->
+                                                budgetMap[b.category] = b.monthlyBudget.toInt().toString()
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("auto_distribute_budget_btn")
+                                    ) {
+                                        Text("Auto-Distribute %", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
                     }

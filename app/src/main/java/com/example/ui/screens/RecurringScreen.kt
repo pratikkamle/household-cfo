@@ -69,8 +69,6 @@ import com.example.data.model.TransactionEntity
 import com.example.ui.components.CategoryIconBadge
 import com.example.ui.components.MemberBadge
 import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
@@ -87,6 +85,10 @@ fun RecurringScreen(
     accounts: List<AccountEntity> = emptyList(),
     members: List<MemberProfile> = emptyList(),
     selectedMemberName: String? = null,
+    isSensitiveRevealed: Boolean = false,
+    onToggleSensitivity: () -> Unit = {},
+    expectedPin: String = "",
+    onSetPin: (String) -> Unit = {},
     onAddRecurring: (RecurringTransactionEntity) -> Unit = {},
     onUpdateRecurring: (RecurringTransactionEntity) -> Unit = {},
     onDeleteRecurring: (RecurringTransactionEntity) -> Unit = {},
@@ -94,7 +96,7 @@ fun RecurringScreen(
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableStateOf("ALL") } // "ALL", "LOANS", "INVESTMENTS", "INCOME", "BILLS"
-    var isAmountsVisible by remember { mutableStateOf(false) }
+    val isAmountsVisible = isSensitiveRevealed
     var isAddSheetOpen by remember { mutableStateOf(false) }
     var ruleToEdit by remember { mutableStateOf<RecurringTransactionEntity?>(null) }
     var ruleToDelete by remember { mutableStateOf<RecurringTransactionEntity?>(null) }
@@ -225,12 +227,12 @@ fun RecurringScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         IconButton(
-                            onClick = { isAmountsVisible = !isAmountsVisible },
+                            onClick = onToggleSensitivity,
                             modifier = Modifier.size(38.dp).testTag("recurring_toggle_visibility")
                         ) {
                             Icon(
                                 imageVector = if (isAmountsVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = if (isAmountsVisible) "Hide Scheduled Amounts" else "View Scheduled Amounts",
+                                contentDescription = if (isAmountsVisible) "Hide Scheduled Amounts" else "Authenticate to View Scheduled Amounts",
                                 tint = if (isAmountsVisible) Emerald500 else MaterialTheme.colorScheme.outline,
                                 modifier = Modifier.size(22.dp)
                             )

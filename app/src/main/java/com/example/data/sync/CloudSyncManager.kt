@@ -12,11 +12,13 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
 import com.example.data.local.AppDatabase
 import com.example.data.model.AccountEntity
+import com.example.data.model.AuthAccount
 import com.example.data.model.CategoryBudgetEntity
 import com.example.data.model.HouseholdEntity
 import com.example.data.model.RecurringTransactionEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.UserEntity
+import com.example.util.CategoryBudgetScaler
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -26,6 +28,7 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -79,8 +82,22 @@ class CloudSyncManager(
         }
     }
 
+    private val authPrefs = context.getSharedPreferences("household_auth_prefs", Context.MODE_PRIVATE)
+
     private val _currentUser = MutableStateFlow<FirebaseUser?>(null)
     val currentUser: StateFlow<FirebaseUser?> = _currentUser.asStateFlow()
+
+    private val _authAccount = MutableStateFlow<AuthAccount?>(
+        authPrefs.getString("auth_user_email", null)?.let { savedEmail ->
+            AuthAccount(
+                uid = authPrefs.getString("auth_user_uid", "local_user") ?: "local_user",
+                email = savedEmail,
+                displayName = authPrefs.getString("auth_user_name", "Household Admin") ?: "Household Admin",
+                isGoogle = authPrefs.getBoolean("auth_is_google", false)
+            )
+        }
+    )
+    val authAccount: StateFlow<AuthAccount?> = _authAccount.asStateFlow()
 
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
@@ -92,8 +109,10 @@ class CloudSyncManager(
         try {
             auth?.let { fbAuth ->
                 _currentUser.value = fbAuth.currentUser
+                syncAuthAccountFromFirebase(fbAuth.currentUser)
                 fbAuth.addAuthStateListener { firebaseAuth ->
                     _currentUser.value = firebaseAuth.currentUser
+                    syncAuthAccountFromFirebase(firebaseAuth.currentUser)
                 }
             }
         } catch (e: Exception) {
@@ -101,10 +120,34 @@ class CloudSyncManager(
         }
     }
 
+    private fun syncAuthAccountFromFirebase(user: FirebaseUser?) {
+        if (user != null) {
+            val account = AuthAccount(
+                uid = user.uid,
+                email = user.email ?: "",
+                displayName = user.displayName?.ifBlank { null }
+                    ?: (user.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"),
+                isGoogle = user.providerData.any { it.providerId == "google.com" }
+            )
+            setAuthenticatedUser(account)
+        }
+    }
+
+    fun setAuthenticatedUser(account: AuthAccount) {
+        authPrefs.edit()
+            .putString("auth_user_email", account.email)
+            .putString("auth_user_name", account.displayName)
+            .putString("auth_user_uid", account.uid)
+            .putBoolean("auth_is_google", account.isGoogle)
+            .apply()
+        _authAccount.value = account
+    }
+
     fun attemptSilentSignIn(scope: CoroutineScope) {
         val fbAuth = auth ?: return
         if (fbAuth.currentUser != null) {
             _currentUser.value = fbAuth.currentUser
+            syncAuthAccountFromFirebase(fbAuth.currentUser)
             return
         }
         val clientId = try {
@@ -132,6 +175,7 @@ class CloudSyncManager(
                     val authCred = GoogleAuthProvider.getCredential(token, null)
                     fbAuth.signInWithCredential(authCred).await()
                     _currentUser.value = fbAuth.currentUser
+                    syncAuthAccountFromFirebase(fbAuth.currentUser)
                 }
             } catch (e: Exception) {
                 Log.d("CloudSync", "Silent sign-in not available: ${e.message}")
@@ -139,10 +183,105 @@ class CloudSyncManager(
         }
     }
 
+    fun signInWithEmail(
+        email: String,
+        pass: String,
+        scope: CoroutineScope,
+        onSuccess: (AuthAccount) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val fbAuth = auth
+        if (fbAuth == null) {
+            // Offline/Local fallback
+            val account = AuthAccount(
+                uid = "local_" + email.hashCode(),
+                email = email.trim(),
+                displayName = email.substringBefore("@").replaceFirstChar { it.uppercase() }
+            )
+            setAuthenticatedUser(account)
+            onSuccess(account)
+            return
+        }
+        scope.launch {
+            try {
+                val res = fbAuth.signInWithEmailAndPassword(email.trim(), pass).await()
+                val user = res.user
+                if (user != null) {
+                    val account = AuthAccount(
+                        uid = user.uid,
+                        email = user.email ?: email.trim(),
+                        displayName = user.displayName?.ifBlank { null }
+                            ?: (user.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"),
+                        isGoogle = false
+                    )
+                    setAuthenticatedUser(account)
+                    _currentUser.value = user
+                    onSuccess(account)
+                } else {
+                    onError("Unable to retrieve user credentials.")
+                }
+            } catch (e: Exception) {
+                Log.e("CloudSync", "Email sign in error: ${e.message}", e)
+                onError(e.localizedMessage ?: "Invalid email or password.")
+            }
+        }
+    }
+
+    fun registerWithEmail(
+        name: String,
+        email: String,
+        pass: String,
+        scope: CoroutineScope,
+        onSuccess: (AuthAccount) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val fbAuth = auth
+        if (fbAuth == null) {
+            val account = AuthAccount(
+                uid = "local_" + email.hashCode(),
+                email = email.trim(),
+                displayName = name.trim()
+            )
+            setAuthenticatedUser(account)
+            onSuccess(account)
+            return
+        }
+        scope.launch {
+            try {
+                val res = fbAuth.createUserWithEmailAndPassword(email.trim(), pass).await()
+                val user = res.user
+                if (user != null) {
+                    try {
+                        val profileUpdates = UserProfileChangeRequest.Builder()
+                            .setDisplayName(name.trim())
+                            .build()
+                        user.updateProfile(profileUpdates).await()
+                    } catch (e: Exception) {
+                        Log.w("CloudSync", "Could not set display name: ${e.message}")
+                    }
+                    val account = AuthAccount(
+                        uid = user.uid,
+                        email = user.email ?: email.trim(),
+                        displayName = name.trim(),
+                        isGoogle = false
+                    )
+                    setAuthenticatedUser(account)
+                    _currentUser.value = user
+                    onSuccess(account)
+                } else {
+                    onError("Failed to create user account.")
+                }
+            } catch (e: Exception) {
+                Log.e("CloudSync", "Registration error: ${e.message}", e)
+                onError(e.localizedMessage ?: "Registration failed.")
+            }
+        }
+    }
+
     fun signInWithGoogle(
         activity: Activity,
         scope: CoroutineScope,
-        onSuccess: () -> Unit = {},
+        onSuccess: (AuthAccount) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
         val fbAuth = auth
@@ -169,12 +308,16 @@ class CloudSyncManager(
                     val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                     val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                     fbAuth.signInWithCredential(authCredential).await()
-                    _currentUser.value = fbAuth.currentUser
-                    onSuccess()
-                    // Start listening to the household
-                    val household = database.householdDao().getPrimaryHousehold()
-                    val code = household?.inviteCode?.ifBlank { "CFO-8821" } ?: "CFO-8821"
-                    startRealtimeSync(code, scope)
+                    val user = fbAuth.currentUser
+                    _currentUser.value = user
+                    val account = AuthAccount(
+                        uid = user?.uid ?: "google_user",
+                        email = user?.email ?: "",
+                        displayName = user?.displayName ?: (user?.email?.substringBefore("@") ?: "Google User"),
+                        isGoogle = true
+                    )
+                    setAuthenticatedUser(account)
+                    onSuccess(account)
                 } else {
                     onError("Unexpected credential format")
                 }
@@ -187,15 +330,73 @@ class CloudSyncManager(
         }
     }
 
+    suspend fun findHouseholdForUser(uid: String, email: String): String? {
+        val db = firestore ?: return null
+        try {
+            // 1. Check user_households by UID
+            val doc = db.collection("user_households").document(uid).get().await()
+            if (doc.exists()) {
+                val code = doc.getString("householdCode")
+                if (!code.isNullOrBlank()) return code
+            }
+            // 2. Check user_households by sanitized email
+            val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+            if (cleanEmail.isNotBlank()) {
+                val emailDoc = db.collection("user_households").document(cleanEmail).get().await()
+                if (emailDoc.exists()) {
+                    val code = emailDoc.getString("householdCode")
+                    if (!code.isNullOrBlank()) return code
+                }
+            }
+            // 3. Check households by adminEmail
+            val query = db.collection("households")
+                .whereEqualTo("adminEmail", email.trim().lowercase())
+                .limit(1)
+                .get().await()
+            if (!query.isEmpty) {
+                val hDoc = query.documents.first()
+                return hDoc.getString("inviteCode") ?: hDoc.id
+            }
+        } catch (e: Exception) {
+            Log.w("CloudSync", "findHouseholdForUser query failed: ${e.message}")
+        }
+        return null
+    }
+
+    fun linkUserToHousehold(uid: String, email: String, householdCode: String, role: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val data = mapOf(
+                    "householdCode" to householdCode.trim().uppercase(),
+                    "role" to role,
+                    "email" to email.trim().lowercase(),
+                    "uid" to uid,
+                    "linkedAt" to System.currentTimeMillis()
+                )
+                db.collection("user_households").document(uid).set(data, SetOptions.merge()).await()
+                val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+                if (cleanEmail.isNotBlank()) {
+                    db.collection("user_households").document(cleanEmail).set(data, SetOptions.merge()).await()
+                }
+            } catch (e: Exception) {
+                Log.w("CloudSync", "linkUserToHousehold error: ${e.message}")
+            }
+        }
+    }
+
     fun signOut(scope: CoroutineScope, onComplete: () -> Unit = {}) {
         stopRealtimeSync()
+        authPrefs.edit().clear().apply()
         try {
             auth?.signOut()
         } catch (e: Exception) {
             Log.w("CloudSync", "Sign out error: ${e.message}")
         }
         _currentUser.value = null
+        _authAccount.value = null
         _syncState.value = SyncState.Idle
+        activeHouseholdCode = null
         scope.launch {
             try {
                 credentialManager.clearCredentialState(ClearCredentialStateRequest())
@@ -226,7 +427,7 @@ class CloudSyncManager(
                     if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
                     scope.launch(Dispatchers.IO) {
                         val name = snapshot.getString("name") ?: return@launch
-                        val budget = snapshot.getDouble("monthlyDiscretionaryBudget") ?: 66500.0
+                        val budget = snapshot.getDouble("monthlyDiscretionaryBudget") ?: 30000.0
                         val admin = snapshot.getString("adminName") ?: "Admin"
                         val existing = database.householdDao().getPrimaryHousehold()
                         if (existing != null) {
@@ -239,6 +440,29 @@ class CloudSyncManager(
                                     isCloudSynced = true
                                 )
                             )
+                        } else {
+                            database.householdDao().insertHousehold(
+                                HouseholdEntity(
+                                    id = 1L,
+                                    name = name,
+                                    currency = snapshot.getString("currency") ?: "INR",
+                                    monthlyDiscretionaryBudget = budget,
+                                    inviteCode = cleanCode,
+                                    adminName = admin,
+                                    adminEmail = snapshot.getString("adminEmail") ?: "",
+                                    securityPin = snapshot.getString("securityPin") ?: "1234",
+                                    isCloudSynced = true,
+                                    createdAt = snapshot.getLong("createdAt") ?: System.currentTimeMillis()
+                                )
+                            )
+                        }
+                        if (budget > 0) {
+                            val currentBudgets = database.budgetDao().getBudgets("").first()
+                            val sum = currentBudgets.sumOf { it.monthlyBudget }
+                            if (currentBudgets.isEmpty() || kotlin.math.abs(sum - budget) > 1.0) {
+                                val scaled = com.example.util.CategoryBudgetScaler.scaleBudgets(budget)
+                                database.budgetDao().insertBudgets(scaled)
+                            }
                         }
                     }
                 }
@@ -500,7 +724,12 @@ class CloudSyncManager(
                 }
                 if (bList.isNotEmpty()) {
                     database.budgetDao().insertBudgets(bList)
+                } else {
+                    val scaled = CategoryBudgetScaler.scaleBudgets(monthlyBudget)
+                    database.budgetDao().insertBudgets(scaled)
                 }
+
+                linkUserToHousehold(userUid, memberEmail, cleanCode, "MEMBER", scope)
 
                 // 5. Start real-time sync
                 startRealtimeSync(cleanCode, scope)
@@ -553,13 +782,18 @@ class CloudSyncManager(
                         .set(mMap, SetOptions.merge())
                 }
 
-                // Upload budgets
-                val budgets = database.budgetDao().getBudgets("").first()
-                budgets.forEach { b ->
+                // Upload budgets scaled accurately to the household's monthlyDiscretionaryBudget
+                val scaled = CategoryBudgetScaler.scaleBudgets(household.monthlyDiscretionaryBudget)
+                database.budgetDao().insertBudgets(scaled)
+                scaled.forEach { b ->
                     db.collection("households").document(code)
                         .collection("category_budgets").document(b.category)
                         .set(mapOf("category" to b.category, "monthlyBudget" to b.monthlyBudget, "budgetAmount" to b.monthlyBudget), SetOptions.merge())
                 }
+
+                val adminUid = auth?.currentUser?.uid ?: "admin_local"
+                val adminEmail = auth?.currentUser?.email ?: household.adminEmail
+                linkUserToHousehold(adminUid, adminEmail, code, "ADMIN", scope)
 
                 startRealtimeSync(code, scope)
             } catch (e: Exception) {

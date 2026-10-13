@@ -25,6 +25,18 @@ interface HouseholdDao {
     @Update
     suspend fun updateHousehold(household: HouseholdEntity)
 
+    @Query("SELECT * FROM households WHERE LOWER(adminEmail) = LOWER(:email) LIMIT 1")
+    suspend fun getHouseholdByAdminEmail(email: String): HouseholdEntity?
+
+    @Query("SELECT * FROM households WHERE inviteCode = :inviteCode LIMIT 1")
+    suspend fun getHouseholdByInviteCode(inviteCode: String): HouseholdEntity?
+
+    @Query("SELECT * FROM households")
+    suspend fun getAllHouseholdsList(): List<HouseholdEntity>
+
     @Query("DELETE FROM households WHERE id = :id")
     suspend fun deleteHousehold(id: Long)
+
+    @Query("DELETE FROM households")
+    suspend fun clearHouseholds()
 }

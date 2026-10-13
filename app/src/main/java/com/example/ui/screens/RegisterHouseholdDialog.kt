@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,6 +59,7 @@ import com.example.ui.theme.ExpenseRed
 fun RegisterHouseholdDialog(
     initialAdminName: String = "",
     initialAdminEmail: String = "",
+    onLogout: () -> Unit = {},
     onRegister: (
         adminName: String,
         adminEmail: String,
@@ -81,8 +83,8 @@ fun RegisterHouseholdDialog(
 
     // Join tab states
     var joinInviteCode by remember { mutableStateOf("") }
-    var joinMemberName by remember { mutableStateOf("") }
-    var joinMemberEmail by remember { mutableStateOf("") }
+    var joinMemberName by remember { mutableStateOf(initialAdminName) }
+    var joinMemberEmail by remember { mutableStateOf(initialAdminEmail) }
     var joinLoading by remember { mutableStateOf(false) }
     var joinError by remember { mutableStateOf<String?>(null) }
 
@@ -106,36 +108,73 @@ fun RegisterHouseholdDialog(
             ) {
                 // Header Banner
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Icon(
-                            imageVector = if (selectedTab == 0) Icons.Default.Home else Icons.Default.GroupAdd,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(28.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (selectedTab == 0) Icons.Default.Home else Icons.Default.GroupAdd,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Household Setup",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (selectedTab == 0) "Create New Household" else "Join Existing Household",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
-                    Column {
-                        Text(
-                            text = "Household CFO Setup",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (selectedTab == 0) "Create New Household" else "Join Existing Household",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
-                        )
+
+                    TextButton(
+                        onClick = onLogout,
+                        modifier = Modifier.testTag("reg_dialog_logout_btn")
+                    ) {
+                        Text("Logout", color = ExpenseRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+
+                // Authenticated Account Info
+                if (initialAdminEmail.isNotBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Shield, contentDescription = null, tint = Emerald500, modifier = Modifier.size(16.dp))
+                            Text(
+                                text = "Authenticated as: $initialAdminEmail",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
 

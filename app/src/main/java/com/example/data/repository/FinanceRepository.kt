@@ -39,11 +39,20 @@ class FinanceRepository(
     suspend fun getHouseholdByName(name: String): HouseholdEntity? =
         householdDao.getHouseholdByName(name)
 
+    suspend fun getHouseholdByAdminEmail(email: String): HouseholdEntity? =
+        householdDao.getHouseholdByAdminEmail(email)
+
+    suspend fun getHouseholdByInviteCode(code: String): HouseholdEntity? =
+        householdDao.getHouseholdByInviteCode(code)
+
     suspend fun updateHousehold(household: HouseholdEntity) =
         householdDao.updateHousehold(household)
 
     suspend fun saveHousehold(household: HouseholdEntity): Long =
         householdDao.insertHousehold(household)
+
+    suspend fun clearHouseholds() =
+        householdDao.clearHouseholds()
 
     fun getUsers(): Flow<List<UserEntity>> =
         userDao.getAllUsers()
@@ -172,6 +181,9 @@ class FinanceRepository(
 
     suspend fun saveBudget(budget: CategoryBudgetEntity) =
         budgetDao.insertBudget(budget)
+
+    suspend fun insertBudgets(budgets: List<CategoryBudgetEntity>) =
+        budgetDao.insertBudgets(budgets)
 
     suspend fun saveBudget(category: String, amount: Double) =
         budgetDao.insertBudget(CategoryBudgetEntity(category = category, monthlyBudget = amount))

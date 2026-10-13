@@ -27,6 +27,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
@@ -40,6 +41,8 @@ import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.ui.draw.clip
+import com.example.ui.screens.AuthScreen
+import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.GoldAccent
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -116,7 +119,26 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             HouseholdCfoTheme {
-                MainApp(viewModel = viewModel)
+                val isUserAuthenticated by viewModel.isUserAuthenticated.collectAsStateWithLifecycle()
+
+                if (!isUserAuthenticated) {
+                    AuthScreen(
+                        onSignInWithEmail = { email, pass, onResult ->
+                            viewModel.signInWithEmail(email, pass, onResult)
+                        },
+                        onRegisterWithEmail = { name, email, pass, onResult ->
+                            viewModel.registerWithEmail(name, email, pass, onResult)
+                        },
+                        onSignInWithGoogle = { act ->
+                            viewModel.signInWithGoogle(act)
+                        },
+                        onContinueOfflineAdmin = { name, email ->
+                            viewModel.continueAsOfflineAdmin(name, email)
+                        }
+                    )
+                } else {
+                    MainApp(viewModel = viewModel)
+                }
             }
         }
     }
@@ -136,6 +158,7 @@ fun MainApp(viewModel: FinanceViewModel) {
     val recurringRules by viewModel.recurringRules.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val budgets by viewModel.budgets.collectAsStateWithLifecycle()
+    val authAccount by viewModel.authAccount.collectAsStateWithLifecycle()
     val selectedMember by viewModel.selectedMember.collectAsStateWithLifecycle()
     val selectedMemberName by viewModel.selectedMemberName.collectAsStateWithLifecycle()
     val household by viewModel.household.collectAsStateWithLifecycle()
@@ -336,6 +359,20 @@ fun MainApp(viewModel: FinanceViewModel) {
                         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).testTag("drawer_item_accounts")
                     )
                 }
+
+                Spacer(modifier = Modifier.weight(1f))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, tint = ExpenseRed) },
+                    label = { Text("Logout & Switch Account", color = ExpenseRed, fontWeight = FontWeight.SemiBold) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        viewModel.signOut()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).testTag("drawer_item_logout")
+                )
             }
         }
     ) {
@@ -551,6 +588,16 @@ fun MainApp(viewModel: FinanceViewModel) {
                             accounts = accounts,
                             members = members,
                             selectedMemberName = selectedMemberName,
+                            isSensitiveRevealed = isSensitiveRevealed,
+                            onToggleSensitivity = {
+                                if (isSensitiveRevealed) {
+                                    viewModel.setSensitivityRevealed(false)
+                                } else {
+                                    showSensitivityAuthDialog = true
+                                }
+                            },
+                            expectedPin = household?.securityPin?.trim() ?: "",
+                            onSetPin = { viewModel.updateHouseholdSecurityPin(it) },
                             onAddRecurring = { viewModel.addRecurringRule(it) },
                             onUpdateRecurring = { viewModel.updateRecurringRule(it) },
                             onDeleteRecurring = { viewModel.deleteRecurringRule(it.id) }
@@ -734,6 +781,10 @@ fun MainApp(viewModel: FinanceViewModel) {
                 viewModel.openEditBudgetPlan()
             },
             onSignInWithGoogle = { if (activity != null) viewModel.signInWithGoogle(activity) },
+            onSignOut = {
+                viewModel.closeHouseholdHub()
+                viewModel.signOut()
+            },
             onDismiss = { viewModel.closeHouseholdHub() }
         )
     }
@@ -751,13 +802,18 @@ fun MainApp(viewModel: FinanceViewModel) {
 
     // First-Time Registration: Prompt when no household is registered yet
     if (household == null) {
+        val authEmail = authAccount?.email ?: currentUser?.email ?: ""
+        val authName = authAccount?.displayName ?: currentUser?.displayName ?: ""
         RegisterHouseholdDialog(
-            initialAdminName = "",
-            initialAdminEmail = "",
+            initialAdminName = authName,
+            initialAdminEmail = authEmail,
+            onLogout = {
+                viewModel.signOut()
+            },
             onRegister = { adminName, adminEmail, householdName, discretionaryBudget, securityPin, onResult ->
                 viewModel.registerHousehold(
                     adminName = adminName,
-                    adminEmail = adminEmail,
+                    adminEmail = adminEmail.ifBlank { authEmail },
                     householdName = householdName,
                     discretionaryBudget = discretionaryBudget,
                     securityPin = securityPin,

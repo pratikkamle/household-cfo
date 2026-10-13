@@ -62,6 +62,7 @@ import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.UpcomingOrange
 import androidx.compose.material.icons.filled.Tune
+import com.example.util.CategoryBudgetScaler
 import com.example.util.CurrencyFormatter
 
 @Composable
@@ -90,8 +91,18 @@ fun BudgetScreen(
         .mapValues { entry -> entry.value.sumOf { it.amount } }
 
     val categoryBudgetSum = budgets.sumOf { it.monthlyBudget }
-    val totalBudget = if (monthlyDiscretionaryBudget > 0) monthlyDiscretionaryBudget else if (categoryBudgetSum > 0) categoryBudgetSum else 50000.0
-    val totalActual = budgets.sumOf { b -> spendMap[b.category] ?: 0.0 }
+    val totalBudget = if (monthlyDiscretionaryBudget > 0) monthlyDiscretionaryBudget else if (categoryBudgetSum > 0) categoryBudgetSum else 30000.0
+
+    // Ensure category allowances strictly divide totalBudget according to the percentage distribution of the 76,500 baseline
+    val activeBudgets = remember(budgets, totalBudget) {
+        if (totalBudget > 0 && (budgets.isEmpty() || kotlin.math.abs(categoryBudgetSum - totalBudget) > 1.0)) {
+            CategoryBudgetScaler.scaleBudgets(totalBudget)
+        } else {
+            budgets
+        }
+    }
+
+    val totalActual = activeBudgets.sumOf { b -> spendMap[b.category] ?: 0.0 }
     val totalRemaining = maxOf(0.0, totalBudget - totalActual)
     val overallProgress = if (totalBudget > 0) (totalActual / totalBudget).toFloat().coerceIn(0f, 1f) else 0f
 
@@ -253,7 +264,7 @@ fun BudgetScreen(
             )
         }
 
-        items(budgets, key = { it.category }) { budget ->
+        items(activeBudgets, key = { it.category }) { budget ->
             val actual = spendMap[budget.category] ?: 0.0
             val remaining = budget.monthlyBudget - actual
             val progress = if (budget.monthlyBudget > 0) (actual / budget.monthlyBudget).toFloat().coerceIn(0f, 1f) else 0f

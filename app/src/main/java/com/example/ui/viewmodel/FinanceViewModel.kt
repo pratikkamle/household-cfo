@@ -25,8 +25,10 @@ import com.example.data.model.UserRole
 import com.example.data.model.toMemberProfile
 import com.example.data.model.matchesMember
 import com.example.data.model.isJoint
+import com.example.data.model.AuthAccount
 import com.example.data.repository.FinanceRepository
 import com.example.data.sync.CloudSyncManager
+import com.example.util.CategoryBudgetScaler
 import com.example.util.CfoAdvisorEngine
 import com.example.util.CfoReviewReport
 import com.example.util.GoalFeasibilityInsight
@@ -67,6 +69,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val database = AppDatabase.getDatabase(application)
     val cloudSyncManager = CloudSyncManager(application, database)
     val currentUser = cloudSyncManager.currentUser
+    val authAccount = cloudSyncManager.authAccount
+    val isUserAuthenticated: StateFlow<Boolean> = cloudSyncManager.authAccount
+        .map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), cloudSyncManager.authAccount.value != null)
     val syncState = cloudSyncManager.syncState
 
     private val repository = FinanceRepository(database)
@@ -193,13 +199,14 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     // Month Summary computation
     val monthSummary: StateFlow<MonthSummary> = combine(
-        database.transactionDao().getAllTransactions(),
-        recurringRules,
-        budgets,
+        combine(database.transactionDao().getAllTransactions(), recurringRules, budgets) { allTx, rules, budgetList ->
+            Triple(allTx, rules, budgetList)
+        },
         _selectedMonth,
-        memberProfiles
-    ) { allTx, rules, budgetList, month, members ->
-        computeMonthSummary(month, allTx, rules, budgetList, household.value, members)
+        memberProfiles,
+        household
+    ) { (allTx, rules, budgetList), month, members, h ->
+        computeMonthSummary(month, allTx, rules, budgetList, h, members)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -223,10 +230,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             DatabaseInitializer.populateInitialData(database)
             val h = repository.getPrimaryHousehold()
-            val code = h?.inviteCode?.ifBlank { "CFO-8821" } ?: "CFO-8821"
-            cloudSyncManager.startRealtimeSync(code, viewModelScope)
+            if (h != null) {
+                val code = h.inviteCode.ifBlank { "CFO-8821" }
+                cloudSyncManager.startRealtimeSync(code, viewModelScope)
+            }
         }
         cloudSyncManager.attemptSilentSignIn(viewModelScope)
+
+        // Ensure category budgets sum matches the household's discretionary budget
+        viewModelScope.launch {
+            household.collect { h ->
+                if (h != null && h.monthlyDiscretionaryBudget > 0) {
+                    val currentBudgets = repository.getBudgets("").first()
+                    val currentSum = currentBudgets.sumOf { it.monthlyBudget }
+                    if (kotlin.math.abs(currentSum - h.monthlyDiscretionaryBudget) > 1.0 && currentSum == CategoryBudgetScaler.BASELINE_TOTAL) {
+                        val scaled = CategoryBudgetScaler.scaleBudgets(h.monthlyDiscretionaryBudget)
+                        repository.insertBudgets(scaled)
+                    }
+                }
+            }
+        }
     }
 
     private fun computeMonthSummary(
@@ -295,8 +318,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val availableBalance = totalIncome - (ruleCommitments + randomExpenses + investments)
 
         val discretionaryBudget = h?.monthlyDiscretionaryBudget?.takeIf { it > 0 }
-            ?: budgetList.sumOf { it.monthlyBudget }.takeIf { it > 0 }
-            ?: 50000.0
+            ?: budgetList.sumOf { it.monthlyBudget }.takeIf { it > 0 && kotlin.math.abs(it - com.example.util.CategoryBudgetScaler.BASELINE_TOTAL) > 1.0 }
+            ?: 30000.0
         val remainingDiscretionary = maxOf(0.0, discretionaryBudget - randomExpenses)
 
         val spendMap = mutableMapOf<String, Double>()
@@ -792,8 +815,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 securityPin = securityPin
             )
             val h = repository.getPrimaryHousehold()
+            val finalBudget = if (discretionaryBudget > 0) discretionaryBudget else 50000.0
+            val scaledBudgets = CategoryBudgetScaler.scaleBudgets(finalBudget)
+            repository.insertBudgets(scaledBudgets)
             if (h != null) {
                 cloudSyncManager.publishHousehold(h, viewModelScope)
+                val account = authAccount.value
+                val uid = account?.uid ?: "local_admin"
+                val email = account?.email ?: adminEmail.trim()
+                cloudSyncManager.linkUserToHousehold(uid, email, h.inviteCode, "ADMIN", viewModelScope)
             }
             onResult(true, "Household created successfully!")
         }
@@ -1103,11 +1133,90 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         cloudSyncManager.syncToCloud(viewModelScope)
     }
 
+    fun signInWithEmail(email: String, pass: String, onResult: (Boolean, String) -> Unit) {
+        cloudSyncManager.signInWithEmail(
+            email = email,
+            pass = pass,
+            scope = viewModelScope,
+            onSuccess = { account ->
+                viewModelScope.launch {
+                    checkAndLoadHouseholdForUser(account)
+                    onResult(true, "Signed in successfully!")
+                }
+            },
+            onError = { msg -> onResult(false, msg) }
+        )
+    }
+
+    fun registerWithEmail(name: String, email: String, pass: String, onResult: (Boolean, String) -> Unit) {
+        cloudSyncManager.registerWithEmail(
+            name = name,
+            email = email,
+            pass = pass,
+            scope = viewModelScope,
+            onSuccess = { account ->
+                viewModelScope.launch {
+                    checkAndLoadHouseholdForUser(account)
+                    onResult(true, "Account created successfully!")
+                }
+            },
+            onError = { msg -> onResult(false, msg) }
+        )
+    }
+
     fun signInWithGoogle(activity: Activity) {
-        cloudSyncManager.signInWithGoogle(activity, viewModelScope)
+        cloudSyncManager.signInWithGoogle(
+            activity = activity,
+            scope = viewModelScope,
+            onSuccess = { account ->
+                viewModelScope.launch {
+                    checkAndLoadHouseholdForUser(account)
+                }
+            }
+        )
+    }
+
+    fun continueAsOfflineAdmin(name: String, email: String) {
+        val account = AuthAccount(
+            uid = "local_admin",
+            email = email.ifBlank { "admin@householdcfo.in" },
+            displayName = name.ifBlank { "Household Admin" }
+        )
+        cloudSyncManager.setAuthenticatedUser(account)
+        viewModelScope.launch {
+            checkAndLoadHouseholdForUser(account)
+        }
+    }
+
+    suspend fun checkAndLoadHouseholdForUser(account: AuthAccount) {
+        // 1. Check local DB for household where adminEmail == account.email
+        val localHousehold = repository.getHouseholdByAdminEmail(account.email)
+            ?: repository.getPrimaryHousehold()?.takeIf { it.adminEmail.equals(account.email, ignoreCase = true) }
+
+        if (localHousehold != null) {
+            cloudSyncManager.startRealtimeSync(localHousehold.inviteCode, viewModelScope)
+            return
+        }
+
+        // 2. Check Cloud Firestore for linked household code
+        val cloudCode = cloudSyncManager.findHouseholdForUser(account.uid, account.email)
+        if (!cloudCode.isNullOrBlank()) {
+            val localByCode = repository.getHouseholdByInviteCode(cloudCode)
+            if (localByCode != null) {
+                cloudSyncManager.startRealtimeSync(cloudCode, viewModelScope)
+            } else {
+                cloudSyncManager.joinHouseholdByCode(cloudCode, account.displayName, account.email, viewModelScope) { _, _ -> }
+            }
+            return
+        }
     }
 
     fun signOut() {
-        cloudSyncManager.signOut(viewModelScope)
+        viewModelScope.launch {
+            cloudSyncManager.signOut(viewModelScope)
+            prefs.edit().remove("active_user_id").apply()
+            _activeUserId.value = null
+            repository.clearHouseholds()
+        }
     }
 }
