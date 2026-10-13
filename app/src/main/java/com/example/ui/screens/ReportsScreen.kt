@@ -54,10 +54,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.AccountEntity
+import com.example.data.model.CategoryBudgetEntity
+import com.example.data.model.FinancialGoalEntity
 import com.example.data.model.MemberColorPalette
+import com.example.data.model.RecurringRuleEntity
 import com.example.data.model.TransactionEntity
+import com.example.data.model.UserRole
 import com.example.data.model.parseHexColor
 import com.example.ui.components.CategoryIconBadge
+import com.example.ui.components.CategoryPieChart
+import com.example.ui.screens.SensitivityAuthDialog
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
@@ -66,14 +73,18 @@ import com.example.ui.theme.JointPurple
 import com.example.ui.theme.OceanTeal
 import com.example.ui.viewmodel.MonthSummary
 import com.example.util.CurrencyFormatter
-
-import com.example.data.model.UserRole
-import com.example.ui.screens.SensitivityAuthDialog
+import com.example.util.GoalFeasibilityInsight
+import com.example.util.XlsxExportManager
 
 @Composable
 fun ReportsScreen(
     summary: MonthSummary,
     transactions: List<TransactionEntity>,
+    recurringRules: List<RecurringRuleEntity> = emptyList(),
+    budgets: List<CategoryBudgetEntity> = emptyList(),
+    goals: List<FinancialGoalEntity> = emptyList(),
+    goalInsights: List<GoalFeasibilityInsight> = emptyList(),
+    accounts: List<AccountEntity> = emptyList(),
     onExportCsv: () -> String,
     onResetDatabase: (Boolean) -> Unit = {},
     currentUserRole: UserRole = UserRole.ADMIN,
@@ -181,6 +192,17 @@ fun ReportsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        // Category Expense Distribution Interactive Pie Chart
+        item {
+            CategoryPieChart(
+                categoryExpenses = topCategories,
+                totalExpense = totalExpense,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("category_expense_pie_chart")
+            )
         }
 
         // Generalized Household Member Spending Distribution Card
@@ -426,7 +448,7 @@ fun ReportsScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Excel & Google Sheets Compatible (.csv)",
+                                text = "Multi-Sheet Excel (.xlsx) & CSV Supported",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -434,7 +456,7 @@ fun ReportsScreen(
                     }
 
                     Text(
-                        text = "Export your entire financial ledger including date, merchant, category, paid by, account, nature, and amount formatted for spreadsheet analysis.",
+                        text = "Export your complete financial records into separate sheets (Commitments, Incomes, Goals & Tracking, Category Expenses, Accounts & Assets, and Full Transactions Ledger).",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 16.sp
@@ -446,36 +468,75 @@ fun ReportsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Ledger size: ${transactions.size} records",
-                            fontSize = 12.sp,
+                            text = "Ledger size: ${transactions.size} records • ${recurringRules.size} rules • ${goals.size} goals",
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.outline
                         )
                     }
 
                     if (currentUserRole.canExportReports) {
-                        Button(
-                            onClick = {
-                                val csv = onExportCsv()
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Household CFO CSV", csv)
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(
-                                    context,
-                                    "Copied ${transactions.size} records to clipboard! Ready to paste into Excel.",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("export_csv_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "Export CSV (Excel / Sheets)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Button(
+                                onClick = {
+                                    try {
+                                        val xlsxFile = XlsxExportManager.exportToXlsx(
+                                            context = context,
+                                            summary = summary,
+                                            transactions = transactions,
+                                            recurringRules = recurringRules,
+                                            budgets = budgets,
+                                            goals = goals,
+                                            goalInsights = goalInsights,
+                                            accounts = accounts
+                                        )
+                                        XlsxExportManager.shareXlsx(context, xlsxFile)
+                                        Toast.makeText(
+                                            context,
+                                            "Exported multi-sheet Excel file (${xlsxFile.name})!",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Export error: ${e.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("export_xlsx_button"),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Emerald500)
+                            ) {
+                                Icon(imageVector = Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(text = "Export Multi-Sheet Excel (.xlsx)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    val csv = onExportCsv()
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Household CFO CSV", csv)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(
+                                        context,
+                                        "Copied ${transactions.size} records to clipboard! Ready to paste into Excel.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .testTag("export_csv_button"),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(text = "Copy CSV Text to Clipboard", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            }
                         }
                     } else {
                         Surface(

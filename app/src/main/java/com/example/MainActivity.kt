@@ -617,6 +617,11 @@ fun MainApp(viewModel: FinanceViewModel) {
                         3 -> ReportsScreen(
                             summary = summary,
                             transactions = transactions,
+                            recurringRules = recurringRules,
+                            budgets = budgets,
+                            goals = goals,
+                            goalInsights = cfoReport.goalInsights,
+                            accounts = accounts,
                             onExportCsv = { viewModel.exportCsvData() },
                             onResetDatabase = { reseed -> viewModel.resetDatabase(reseed) },
                             currentUserRole = activeUserRole,

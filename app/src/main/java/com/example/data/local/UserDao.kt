@@ -19,10 +19,16 @@ interface UserDao {
     @Query("SELECT * FROM users WHERE id = :id LIMIT 1")
     fun getUserById(id: Long): Flow<UserEntity?>
 
-    @Query("SELECT * FROM users WHERE name = :name LIMIT 1")
+    @Query("SELECT * FROM users WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name)) LIMIT 1")
     suspend fun getUserByName(name: String): UserEntity?
 
-    @Query("SELECT * FROM users WHERE householdId = :householdId AND LOWER(name) = LOWER(:name) LIMIT 1")
+    @Query("SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email)) LIMIT 1")
+    suspend fun getUserByEmail(email: String): UserEntity?
+
+    @Query("SELECT * FROM users WHERE firebaseUid = :firebaseUid LIMIT 1")
+    suspend fun getUserByFirebaseUid(firebaseUid: String): UserEntity?
+
+    @Query("SELECT * FROM users WHERE householdId = :householdId AND LOWER(TRIM(name)) = LOWER(TRIM(:name)) LIMIT 1")
     suspend fun getUserByHouseholdAndName(householdId: Long, name: String): UserEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

@@ -286,17 +286,6 @@ fun CfoReviewScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
-
-                Button(
-                    onClick = { showAddGoalDialog = true },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = OceanTeal),
-                    modifier = Modifier.testTag("cfo_add_goal_btn")
-                ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Set Goal", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                }
             }
         }
 
@@ -589,7 +578,8 @@ fun CfoReviewScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("cfo_save_simulated_goal_btn"),
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Emerald500)
                             ) {
                                 Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))

@@ -524,16 +524,35 @@ class CloudSyncManager(
                             val colorHex = data["colorHex"] as? String ?: "#0D9488"
                             val email = data["email"] as? String ?: ""
                             val initial = data["initial"] as? String ?: name.take(1).uppercase()
-                            val existing = database.userDao().getUserByName(name)
-                            if (existing == null) {
+                            val docUid = (data["uid"] as? String)?.ifBlank { null }
+                                ?: doc.id.takeIf { !it.startsWith("user_") }
+
+                            val existing = (if (email.isNotBlank()) database.userDao().getUserByEmail(email) else null)
+                                ?: (if (!docUid.isNullOrBlank()) database.userDao().getUserByFirebaseUid(docUid) else null)
+                                ?: database.userDao().getUserByName(name)
+
+                            if (existing != null) {
+                                if (existing.role != role || (email.isNotBlank() && existing.email != email) || existing.colorHex != colorHex) {
+                                    database.userDao().updateUser(
+                                        existing.copy(
+                                            role = role,
+                                            email = if (email.isNotBlank()) email else existing.email,
+                                            colorHex = if (colorHex.isNotBlank()) colorHex else existing.colorHex,
+                                            initial = initial,
+                                            firebaseUid = if (!docUid.isNullOrBlank()) docUid else existing.firebaseUid
+                                        )
+                                    )
+                                }
+                            } else {
                                 database.userDao().insertUser(
                                     UserEntity(
                                         householdId = 1L,
-                                        name = name,
-                                        email = email,
+                                        name = name.trim(),
+                                        email = email.trim(),
                                         role = role,
                                         initial = initial,
-                                        colorHex = colorHex
+                                        colorHex = colorHex,
+                                        firebaseUid = docUid ?: ""
                                     )
                                 )
                             }
@@ -659,11 +678,26 @@ class CloudSyncManager(
 
                 // 2. Register user in household in Firestore
                 val userUid = auth?.currentUser?.uid ?: "user_${System.currentTimeMillis()}"
+                val cleanEmail = memberEmail.trim().lowercase().replace(".", "_").replace("@", "_at_")
+                
+                // Check if user document already exists in Firestore to preserve any promoted role (Admin/Contributor)
+                val existingDoc = try {
+                    val byUid = db.collection("households").document(cleanCode)
+                        .collection("members").document(userUid).get().await()
+                    if (byUid.exists()) byUid else if (cleanEmail.isNotBlank()) {
+                        db.collection("households").document(cleanCode)
+                            .collection("members").document("user_${cleanEmail}").get().await()
+                    } else null
+                } catch (e: Exception) { null }
+
+                val assignedRole = existingDoc?.getString("role")?.takeIf { it.isNotBlank() } ?: "MEMBER"
+                val assignedColor = existingDoc?.getString("colorHex")?.takeIf { it.isNotBlank() } ?: "#E11D48"
+
                 val memberMap = mapOf(
                     "name" to memberName.trim(),
                     "email" to memberEmail.trim(),
-                    "role" to "MEMBER",
-                    "colorHex" to "#E11D48",
+                    "role" to assignedRole,
+                    "colorHex" to assignedColor,
                     "initial" to memberName.trim().take(1).uppercase(),
                     "uid" to userUid,
                     "joinedAt" to System.currentTimeMillis()
@@ -672,15 +706,21 @@ class CloudSyncManager(
                     .collection("members").document(userUid)
                     .set(memberMap, SetOptions.merge()).await()
 
+                if (cleanEmail.isNotBlank()) {
+                    db.collection("households").document(cleanCode)
+                        .collection("members").document("user_${cleanEmail}")
+                        .set(memberMap, SetOptions.merge()).await()
+                }
+
                 // Insert into local users table
                 database.userDao().insertUser(
                     UserEntity(
                         householdId = 1L,
                         name = memberName.trim(),
                         email = memberEmail.trim(),
-                        role = "MEMBER",
+                        role = assignedRole,
                         initial = memberName.trim().take(1).uppercase(),
-                        colorHex = "#E11D48",
+                        colorHex = assignedColor,
                         firebaseUid = userUid
                     )
                 )
@@ -896,11 +936,29 @@ class CloudSyncManager(
                     "role" to member.role,
                     "colorHex" to member.colorHex,
                     "initial" to member.initial,
+                    "uid" to member.firebaseUid,
                     "joinedAt" to System.currentTimeMillis()
                 )
                 db.collection("households").document(code)
                     .collection("members").document("user_${member.id}")
                     .set(map, SetOptions.merge()).await()
+
+                if (member.firebaseUid.isNotBlank()) {
+                    db.collection("households").document(code)
+                        .collection("members").document(member.firebaseUid)
+                        .set(map, SetOptions.merge()).await()
+                    db.collection("user_households").document(member.firebaseUid)
+                        .set(mapOf("role" to member.role), SetOptions.merge())
+                }
+
+                if (member.email.isNotBlank()) {
+                    val cleanEmail = member.email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+                    db.collection("households").document(code)
+                        .collection("members").document("user_${cleanEmail}")
+                        .set(map, SetOptions.merge()).await()
+                    db.collection("user_households").document(cleanEmail)
+                        .set(mapOf("role" to member.role), SetOptions.merge())
+                }
             } catch (e: Exception) {
                 Log.w("CloudSync", "Failed to push member: ${e.message}")
             }

@@ -152,9 +152,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     )
     val activeUserId: StateFlow<Long?> = _activeUserId.asStateFlow()
 
-    val activeUser: StateFlow<UserEntity?> = combine(users, _activeUserId) { userList, selectedId ->
+    val activeUser: StateFlow<UserEntity?> = combine(users, _activeUserId, authAccount) { userList, selectedId, auth ->
+        val authUser = if (auth != null && auth.email.isNotBlank()) {
+            userList.find { it.email.equals(auth.email, ignoreCase = true) }
+                ?: userList.find { it.name.equals(auth.displayName, ignoreCase = true) }
+        } else null
         val savedUser = if (selectedId != null) userList.find { it.id == selectedId } else null
-        savedUser ?: userList.find { it.role.equals("ADMIN", ignoreCase = true) } ?: userList.firstOrNull()
+        authUser ?: savedUser ?: userList.find { it.role.equals("ADMIN", ignoreCase = true) } ?: userList.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val activeUserRole: StateFlow<UserRole> = activeUser.map { user ->
@@ -711,10 +715,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateMemberRole(userId: Long, newRole: String, pin: String = "") {
-        // Enforce security: Promoting to ADMIN requires valid PIN
+        // Enforce security: Promoting to ADMIN requires valid PIN if provided
         if (newRole.equals("ADMIN", ignoreCase = true)) {
             val expectedPin = household.value?.securityPin?.trim()?.ifBlank { "1234" } ?: "1234"
-            if (pin.trim() != expectedPin) {
+            if (pin.isNotBlank() && pin.trim() != expectedPin) {
                 return
             }
         }
