@@ -71,7 +71,8 @@ data class MemberProfile(
     val lightColor: Color,
     val role: String = "MEMBER", // "ADMIN", "CONTRIBUTOR", "MEMBER", "USER"
     val userId: Long = 0L,
-    val email: String = ""
+    val email: String = "",
+    val photoUrl: String? = null
 ) {
     val userRole: UserRole get() = UserRole.fromString(role)
 }
@@ -82,7 +83,8 @@ val JointMemberProfile = MemberProfile(
     initial = "J",
     color = JointPurple,
     lightColor = JointPurpleLight,
-    role = "SHARED"
+    role = "SHARED",
+    photoUrl = null
 )
 
 val MemberColorPalette = listOf(
@@ -114,7 +116,8 @@ fun UserEntity.toMemberProfile(): MemberProfile {
         lightColor = baseColor.copy(alpha = 0.16f),
         role = role,
         userId = id,
-        email = email
+        email = email,
+        photoUrl = photoUrl
     )
 }
 

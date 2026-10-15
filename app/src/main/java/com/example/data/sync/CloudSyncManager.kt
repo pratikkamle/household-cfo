@@ -93,7 +93,8 @@ class CloudSyncManager(
                 uid = authPrefs.getString("auth_user_uid", "local_user") ?: "local_user",
                 email = savedEmail,
                 displayName = authPrefs.getString("auth_user_name", "Household Admin") ?: "Household Admin",
-                isGoogle = authPrefs.getBoolean("auth_is_google", false)
+                isGoogle = authPrefs.getBoolean("auth_is_google", false),
+                photoUrl = authPrefs.getString("auth_user_photo_url", null)
             )
         }
     )
@@ -127,7 +128,8 @@ class CloudSyncManager(
                 email = user.email ?: "",
                 displayName = user.displayName?.ifBlank { null }
                     ?: (user.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"),
-                isGoogle = user.providerData.any { it.providerId == "google.com" }
+                isGoogle = user.providerData.any { it.providerId == "google.com" },
+                photoUrl = user.photoUrl?.toString()
             )
             setAuthenticatedUser(account)
         }
@@ -139,47 +141,57 @@ class CloudSyncManager(
             .putString("auth_user_name", account.displayName)
             .putString("auth_user_uid", account.uid)
             .putBoolean("auth_is_google", account.isGoogle)
+            .putString("auth_user_photo_url", account.photoUrl)
             .apply()
         _authAccount.value = account
     }
 
     fun attemptSilentSignIn(scope: CoroutineScope) {
-        val fbAuth = auth ?: return
-        if (fbAuth.currentUser != null) {
-            _currentUser.value = fbAuth.currentUser
-            syncAuthAccountFromFirebase(fbAuth.currentUser)
-            return
-        }
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (e: Exception) {
-            return
-        }
-
-        val googleIdOption = GetGoogleIdOption.Builder()
-            .setFilterByAuthorizedAccounts(true)
-            .setServerClientId(clientId)
-            .setAutoSelectEnabled(true)
-            .build()
-
-        val request = GetCredentialRequest.Builder()
-            .addCredentialOption(googleIdOption)
-            .build()
-
-        scope.launch(Dispatchers.IO) {
-            try {
-                val result = credentialManager.getCredential(context, request)
-                val credential = result.credential
-                if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                    val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                    val authCred = GoogleAuthProvider.getCredential(token, null)
-                    fbAuth.signInWithCredential(authCred).await()
-                    _currentUser.value = fbAuth.currentUser
-                    syncAuthAccountFromFirebase(fbAuth.currentUser)
-                }
-            } catch (e: Exception) {
-                Log.d("CloudSync", "Silent sign-in not available: ${e.message}")
+        try {
+            val fbAuth = auth ?: return
+            if (fbAuth.currentUser != null) {
+                _currentUser.value = fbAuth.currentUser
+                syncAuthAccountFromFirebase(fbAuth.currentUser)
+                return
             }
+            // On OEM devices (Oppo ColorOS, Realme, Vivo), CredentialManager requires an Activity context
+            // and throws WindowManager.BadTokenException if invoked on an Application context.
+            if (context !is Activity) {
+                return
+            }
+            val clientId = try {
+                context.getString(R.string.default_web_client_id)
+            } catch (e: Exception) {
+                return
+            }
+
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(true)
+                .setServerClientId(clientId)
+                .setAutoSelectEnabled(true)
+                .build()
+
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
+
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val result = credentialManager.getCredential(context, request)
+                    val credential = result.credential
+                    if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                        val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                        val authCred = GoogleAuthProvider.getCredential(token, null)
+                        fbAuth.signInWithCredential(authCred).await()
+                        _currentUser.value = fbAuth.currentUser
+                        syncAuthAccountFromFirebase(fbAuth.currentUser)
+                    }
+                } catch (t: Throwable) {
+                    Log.d("CloudSync", "Silent sign-in not available: ${t.message}")
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w("CloudSync", "Silent sign-in safety warning: ${t.message}")
         }
     }
 
@@ -524,6 +536,7 @@ class CloudSyncManager(
                             val colorHex = data["colorHex"] as? String ?: "#0D9488"
                             val email = data["email"] as? String ?: ""
                             val initial = data["initial"] as? String ?: name.take(1).uppercase()
+                            val photoUrl = data["photoUrl"] as? String
                             val docUid = (data["uid"] as? String)?.ifBlank { null }
                                 ?: doc.id.takeIf { !it.startsWith("user_") }
 
@@ -532,14 +545,16 @@ class CloudSyncManager(
                                 ?: database.userDao().getUserByName(name)
 
                             if (existing != null) {
-                                if (existing.role != role || (email.isNotBlank() && existing.email != email) || existing.colorHex != colorHex) {
+                                val updatedPhoto = if (!photoUrl.isNullOrBlank()) photoUrl else existing.photoUrl
+                                if (existing.role != role || (email.isNotBlank() && existing.email != email) || existing.colorHex != colorHex || existing.photoUrl != updatedPhoto) {
                                     database.userDao().updateUser(
                                         existing.copy(
                                             role = role,
                                             email = if (email.isNotBlank()) email else existing.email,
                                             colorHex = if (colorHex.isNotBlank()) colorHex else existing.colorHex,
                                             initial = initial,
-                                            firebaseUid = if (!docUid.isNullOrBlank()) docUid else existing.firebaseUid
+                                            firebaseUid = if (!docUid.isNullOrBlank()) docUid else existing.firebaseUid,
+                                            photoUrl = updatedPhoto
                                         )
                                     )
                                 }
@@ -552,7 +567,8 @@ class CloudSyncManager(
                                         role = role,
                                         initial = initial,
                                         colorHex = colorHex,
-                                        firebaseUid = docUid ?: ""
+                                        firebaseUid = docUid ?: "",
+                                        photoUrl = photoUrl
                                     )
                                 )
                             }
@@ -937,6 +953,7 @@ class CloudSyncManager(
                     "colorHex" to member.colorHex,
                     "initial" to member.initial,
                     "uid" to member.firebaseUid,
+                    "photoUrl" to (member.photoUrl ?: ""),
                     "joinedAt" to System.currentTimeMillis()
                 )
                 db.collection("households").document(code)

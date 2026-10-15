@@ -57,11 +57,20 @@ class FinanceRepository(
     fun getUsers(): Flow<List<UserEntity>> =
         userDao.getAllUsers()
 
+    suspend fun getUserByEmail(email: String): UserEntity? =
+        userDao.getUserByEmail(email)
+
+    suspend fun getUserByName(name: String): UserEntity? =
+        userDao.getUserByName(name)
+
     suspend fun getUserByHouseholdAndName(householdId: Long, name: String): UserEntity? =
         userDao.getUserByHouseholdAndName(householdId, name)
 
     suspend fun saveUser(user: UserEntity): Long =
         userDao.insertUser(user)
+
+    suspend fun updateUser(user: UserEntity) =
+        userDao.updateUser(user)
 
     suspend fun deleteUser(userId: Long) =
         userDao.deleteUser(userId)

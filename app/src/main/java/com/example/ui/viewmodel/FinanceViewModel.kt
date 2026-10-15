@@ -1193,6 +1193,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     suspend fun checkAndLoadHouseholdForUser(account: AuthAccount) {
+        // Persist photoUrl for personalization
+        if (!account.photoUrl.isNullOrBlank()) {
+            val user = if (account.email.isNotBlank()) repository.getUserByEmail(account.email) else null
+            val targetUser = user ?: repository.getPrimaryHousehold()?.let { repository.getUserByName(it.adminName) }
+            if (targetUser != null && targetUser.photoUrl != account.photoUrl) {
+                repository.updateUser(targetUser.copy(photoUrl = account.photoUrl))
+            }
+        }
+
         // 1. Check local DB for household where adminEmail == account.email
         val localHousehold = repository.getHouseholdByAdminEmail(account.email)
             ?: repository.getPrimaryHousehold()?.takeIf { it.adminEmail.equals(account.email, ignoreCase = true) }

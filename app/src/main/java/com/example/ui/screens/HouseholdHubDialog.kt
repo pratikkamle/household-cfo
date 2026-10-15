@@ -83,6 +83,7 @@ import com.example.data.model.UserEntity
 import com.example.data.model.UserRole
 import com.example.data.model.parseHexColor
 import com.example.data.sync.SyncState
+import com.example.ui.components.UserAvatar
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.OceanTeal
@@ -217,18 +218,44 @@ fun HouseholdHubDialog(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "ACTIVE PROFILE:",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "${activeUser?.name ?: "Member"} • Role: ${currentUserRole.displayName}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    UserAvatar(
+                                        name = activeUser?.name ?: "Member",
+                                        photoUrl = activeUser?.photoUrl ?: currentUser?.photoUrl?.toString(),
+                                        size = 36.dp,
+                                        backgroundColor = MaterialTheme.colorScheme.primary,
+                                        fontSize = 15.sp
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "ACTIVE PROFILE",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = activeUser?.name ?: "Member",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                ) {
+                                    Text(
+                                        text = currentUserRole.displayName,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
                             }
 
                             if (users.size > 1) {
@@ -631,20 +658,13 @@ fun HouseholdHubDialog(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .clip(CircleShape)
-                                        .background(member.color),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = member.initial,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp
-                                    )
-                                }
+                                UserAvatar(
+                                    name = member.displayName,
+                                    photoUrl = member.photoUrl,
+                                    size = 38.dp,
+                                    backgroundColor = member.color,
+                                    fontSize = 15.sp
+                                )
                                 Column {
                                     Text(
                                         text = member.displayName,

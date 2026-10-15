@@ -4,5 +4,6 @@ data class AuthAccount(
     val uid: String,
     val email: String,
     val displayName: String,
-    val isGoogle: Boolean = false
+    val isGoogle: Boolean = false,
+    val photoUrl: String? = null
 )

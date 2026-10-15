@@ -1,9 +1,12 @@
 package com.example.ui.screens
 
 import android.app.Activity
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -366,7 +369,7 @@ fun AuthScreen(
                         HorizontalDivider(modifier = Modifier.weight(1f))
                     }
 
-                    // Google OAuth Button
+                    // Gmail Sign-In / Sign-Up Button
                     OutlinedButton(
                         onClick = {
                             if (activity != null) {
@@ -384,19 +387,15 @@ fun AuthScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            // Google G Badge styling
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFF4285F4),
-                                modifier = Modifier.size(20.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text("G", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
-                                }
-                            }
+                            // Actual Gmail Icon
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_gmail),
+                                contentDescription = "Gmail",
+                                modifier = Modifier.size(22.dp)
+                            )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Continue with Google (OAuth)",
+                                text = if (selectedTab == 1) "Sign Up with Gmail" else "Sign in with Gmail",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )

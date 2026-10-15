@@ -17,12 +17,20 @@ class FinanceNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onListenerConnected() {
-        super.onListenerConnected()
-        SmartNotificationManager.updateServiceConnected(true)
+        try {
+            super.onListenerConnected()
+            SmartNotificationManager.updateServiceConnected(true)
+        } catch (t: Throwable) {
+            Log.w("FinanceNotifListener", "onListenerConnected safety catch: ${t.message}")
+        }
     }
 
     override fun onListenerDisconnected() {
-        super.onListenerDisconnected()
-        SmartNotificationManager.updateServiceConnected(false)
+        try {
+            super.onListenerDisconnected()
+            SmartNotificationManager.updateServiceConnected(false)
+        } catch (t: Throwable) {
+            Log.w("FinanceNotifListener", "onListenerDisconnected safety catch: ${t.message}")
+        }
     }
 }

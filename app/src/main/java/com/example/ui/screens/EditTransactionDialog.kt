@@ -54,10 +54,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.AccountEntity
 import com.example.data.model.CategoryConstants
+import com.example.data.model.JointMemberProfile
 import com.example.data.model.MemberProfile
 import com.example.data.model.PaymentMethod
 import com.example.data.model.TransactionEntity
+import com.example.data.model.isJoint
 import com.example.ui.components.CategoryIconBadge
+import com.example.ui.components.UserAvatar
 import com.example.ui.theme.Emerald500
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
@@ -77,6 +80,14 @@ fun EditTransactionDialog(
 ) {
     val context = LocalContext.current
     val isIncome = transaction.type == "INCOME"
+
+    val displayMembers = remember(members) {
+        if (members.isNotEmpty()) {
+            members + JointMemberProfile
+        } else {
+            listOf(JointMemberProfile)
+        }
+    }
 
     var amountText by remember {
         mutableStateOf(if (transaction.amount % 1.0 == 0.0) transaction.amount.toLong().toString() else transaction.amount.toString())
@@ -217,29 +228,42 @@ fun EditTransactionDialog(
                     }
                 }
 
-                // Member Selection (Paid By / Credited To)
-                if (members.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = if (isIncome) "Earned / Credited To" else "Paid By Member",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            members.forEach { m ->
-                                val isSelected = selectedPaidByName.equals(m.displayName, ignoreCase = true) ||
-                                        selectedPaidByName.equals(m.id, ignoreCase = true)
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = { selectedPaidByName = m.displayName },
-                                    label = { Text(m.displayName, fontSize = 12.sp) }
-                                )
-                            }
+                // Member Selection (Paid By / Credited To / Joint Household)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = if (isIncome) "Earned / Credited To" else "Paid By (Household Member)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        displayMembers.forEach { m ->
+                            val isSelected = selectedPaidByName.equals(m.displayName, ignoreCase = true) ||
+                                    selectedPaidByName.equals(m.id, ignoreCase = true) ||
+                                    (m.id == "JOINT" && isJoint(selectedPaidByName))
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { selectedPaidByName = m.displayName },
+                                label = { Text(m.displayName, fontSize = 12.sp) },
+                                leadingIcon = {
+                                    UserAvatar(
+                                        name = m.displayName,
+                                        photoUrl = m.photoUrl,
+                                        size = 18.dp,
+                                        backgroundColor = m.color,
+                                        fontSize = 9.sp
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = m.color.copy(alpha = 0.2f),
+                                    selectedLabelColor = m.color
+                                ),
+                                modifier = Modifier.testTag("edit_tx_member_${m.id.lowercase()}")
+                            )
                         }
                     }
                 }

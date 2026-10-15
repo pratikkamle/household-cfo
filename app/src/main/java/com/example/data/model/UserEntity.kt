@@ -29,5 +29,6 @@ data class UserEntity(
     val initial: String = "",
     val colorHex: String = "#0284C7",
     val firebaseUid: String = "",
+    val photoUrl: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

@@ -1,21 +1,29 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.CarRental
 import androidx.compose.material.icons.filled.Category
@@ -147,24 +155,69 @@ fun MonthSelectorHeader(
     onNext: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 2.dp),
+        contentAlignment = Alignment.Center
     ) {
-        IconButton(onClick = onPrevious, modifier = Modifier.testTag("btn_prev_month")) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Month")
-        }
-        Text(
-            text = displayMonth,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        IconButton(onClick = onNext, modifier = Modifier.testTag("btn_next_month")) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Month")
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                IconButton(
+                    onClick = onPrevious,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .testTag("btn_prev_month")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Previous Month",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarMonth,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = displayMonth,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                IconButton(
+                    onClick = onNext,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .testTag("btn_next_month")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Next Month",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
@@ -260,20 +313,13 @@ fun MemberFilterRow(
                 onClick = { onMemberNameSelected(member.displayName) },
                 label = { Text(member.displayName) },
                 leadingIcon = {
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(CircleShape)
-                            .background(member.color),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = member.initial,
-                            color = Color.White,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    UserAvatar(
+                        name = member.displayName,
+                        photoUrl = member.photoUrl,
+                        size = 18.dp,
+                        backgroundColor = member.color,
+                        fontSize = 9.sp
+                    )
                 },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = member.color.copy(alpha = 0.2f),
@@ -281,6 +327,46 @@ fun MemberFilterRow(
                 ),
                 modifier = Modifier.testTag("filter_${member.displayName.lowercase()}")
             )
+        }
+    }
+}
+
+/**
+ * Universal UserAvatar component supporting Gmail / Google profile image
+ * with automatic fallback to high-contrast initial badge
+ */
+@Composable
+fun UserAvatar(
+    name: String,
+    photoUrl: String? = null,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+    backgroundColor: Color = MaterialTheme.colorScheme.primary,
+    fontSize: TextUnit = 16.sp
+) {
+    Surface(
+        shape = CircleShape,
+        color = backgroundColor,
+        modifier = modifier.size(size)
+    ) {
+        if (!photoUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = photoUrl,
+                contentDescription = name,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    text = name.trim().take(1).uppercase().ifBlank { "C" },
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = fontSize
+                )
+            }
         }
     }
 }

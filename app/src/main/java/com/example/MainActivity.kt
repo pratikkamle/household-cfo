@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.sync.SyncState
+import com.example.ui.components.UserAvatar
 import com.example.ui.screens.AccountsScreen
 import com.example.ui.screens.AddExpenseSheet
 import com.example.ui.screens.AddIncomeSheet
@@ -115,7 +116,11 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             android.util.Log.w("MainActivity", "Firebase init warning: ${e.message}")
         }
-        enableEdgeToEdge()
+        try {
+            enableEdgeToEdge()
+        } catch (t: Throwable) {
+            android.util.Log.w("MainActivity", "EdgeToEdge warning: ${t.message}")
+        }
 
         setContent {
             HouseholdCfoTheme {
@@ -226,20 +231,13 @@ fun MainApp(viewModel: FinanceViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(42.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = (activeUser?.name?.take(1) ?: "C"),
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 18.sp
-                                    )
-                                }
-                            }
+                            UserAvatar(
+                                name = activeUser?.name ?: "C",
+                                photoUrl = activeUser?.photoUrl ?: currentUser?.photoUrl?.toString(),
+                                size = 46.dp,
+                                backgroundColor = MaterialTheme.colorScheme.primary,
+                                fontSize = 18.sp
+                            )
                             Column {
                                 Text(
                                     text = household?.name ?: "Household CFO",

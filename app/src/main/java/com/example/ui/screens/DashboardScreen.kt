@@ -258,22 +258,23 @@ fun DashboardScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-        // Month Selector
+        // Compact Top Navigation: Modern Month Switcher & Member Filter
         item {
-            MonthSelectorHeader(
-                displayMonth = summary.displayMonth,
-                onPrevious = onPreviousMonth,
-                onNext = onNextMonth
-            )
-        }
-
-        // Generalized Member Filter Chips (All Household / Members 1, 2, 3, 4+ / Joint)
-        item {
-            MemberFilterRow(
-                members = members,
-                selectedMemberName = selectedMemberName,
-                onMemberNameSelected = onMemberNameSelected
-            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                MonthSelectorHeader(
+                    displayMonth = summary.displayMonth,
+                    onPrevious = onPreviousMonth,
+                    onNext = onNextMonth
+                )
+                MemberFilterRow(
+                    members = members,
+                    selectedMemberName = selectedMemberName,
+                    onMemberNameSelected = onMemberNameSelected
+                )
+            }
         }
 
         // Hero Financial Overview Card (Matches user prompt metrics)
