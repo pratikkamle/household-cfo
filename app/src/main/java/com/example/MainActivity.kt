@@ -47,6 +47,7 @@ import com.example.ui.theme.GoldAccent
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -63,6 +64,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -170,6 +172,7 @@ fun MainApp(viewModel: FinanceViewModel) {
     val members by viewModel.memberProfiles.collectAsStateWithLifecycle()
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val isCheckingCloudHousehold by viewModel.isCheckingCloudHousehold.collectAsStateWithLifecycle()
 
     val activeUserRole by viewModel.activeUserRole.collectAsStateWithLifecycle()
     val isSensitiveRevealed by viewModel.isSensitiveRevealed.collectAsStateWithLifecycle()
@@ -472,34 +475,79 @@ fun MainApp(viewModel: FinanceViewModel) {
             bottomBar = {
                 NavigationBar(
                     modifier = Modifier.testTag("main_navigation_bar"),
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 3.dp
                 ) {
                     NavigationBarItem(
                         selected = currentTab == 0,
                         onClick = { viewModel.setTab(0) },
                         icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
-                        label = { Text("Dashboard") },
+                        label = {
+                            Text(
+                                text = "Dashboard",
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                fontSize = 10.5.sp,
+                                letterSpacing = (-0.3).sp,
+                                fontWeight = if (currentTab == 0) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        alwaysShowLabel = true,
                         modifier = Modifier.testTag("nav_tab_dashboard")
                     )
                     NavigationBarItem(
                         selected = currentTab == 1,
                         onClick = { viewModel.setTab(1) },
                         icon = { Icon(Icons.Default.Schedule, contentDescription = "Scheduled") },
-                        label = { Text("Scheduled") },
+                        label = {
+                            Text(
+                                text = "Scheduled",
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                fontSize = 10.5.sp,
+                                letterSpacing = (-0.3).sp,
+                                fontWeight = if (currentTab == 1) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        alwaysShowLabel = true,
                         modifier = Modifier.testTag("nav_tab_recurring")
                     )
                     NavigationBarItem(
                         selected = currentTab == 2,
                         onClick = { viewModel.setTab(2) },
                         icon = { Icon(Icons.Default.PieChart, contentDescription = "Budget") },
-                        label = { Text("Budget") },
+                        label = {
+                            Text(
+                                text = "Budget",
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                fontSize = 10.5.sp,
+                                letterSpacing = (-0.3).sp,
+                                fontWeight = if (currentTab == 2) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        alwaysShowLabel = true,
                         modifier = Modifier.testTag("nav_tab_budget")
                     )
                     NavigationBarItem(
                         selected = currentTab == 3,
                         onClick = { viewModel.setTab(3) },
                         icon = { Icon(Icons.Default.BarChart, contentDescription = "Reports") },
-                        label = { Text("Reports") },
+                        label = {
+                            Text(
+                                text = "Reports",
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                fontSize = 10.5.sp,
+                                letterSpacing = (-0.3).sp,
+                                fontWeight = if (currentTab == 3) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        alwaysShowLabel = true,
                         modifier = Modifier.testTag("nav_tab_reports")
                     )
                     if (activeUserRole.canViewAccounts) {
@@ -507,7 +555,18 @@ fun MainApp(viewModel: FinanceViewModel) {
                             selected = currentTab == 4,
                             onClick = { viewModel.setTab(4) },
                             icon = { Icon(Icons.Default.AccountBalance, contentDescription = "Accounts") },
-                            label = { Text("Accounts") },
+                            label = {
+                                Text(
+                                    text = "Accounts",
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 10.5.sp,
+                                    letterSpacing = (-0.3).sp,
+                                    fontWeight = if (currentTab == 4) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            alwaysShowLabel = true,
                             modifier = Modifier.testTag("nav_tab_accounts")
                         )
                     }
@@ -803,30 +862,65 @@ fun MainApp(viewModel: FinanceViewModel) {
         )
     }
 
-    // First-Time Registration: Prompt when no household is registered yet
+    // First-Time Registration or Auto Cloud Restoration
     if (household == null) {
-        val authEmail = authAccount?.email ?: currentUser?.email ?: ""
-        val authName = authAccount?.displayName ?: currentUser?.displayName ?: ""
-        RegisterHouseholdDialog(
-            initialAdminName = authName,
-            initialAdminEmail = authEmail,
-            onLogout = {
-                viewModel.signOut()
-            },
-            onRegister = { adminName, adminEmail, householdName, discretionaryBudget, securityPin, onResult ->
-                viewModel.registerHousehold(
-                    adminName = adminName,
-                    adminEmail = adminEmail.ifBlank { authEmail },
-                    householdName = householdName,
-                    discretionaryBudget = discretionaryBudget,
-                    securityPin = securityPin,
-                    onResult = onResult
-                )
-            },
-            onJoinWithCode = { inviteCode, memberName, onResult ->
-                viewModel.joinHousehold(inviteCode, memberName, onResult)
+        if (isCheckingCloudHousehold) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(44.dp)
+                    )
+                    Text(
+                        text = "Restoring Your Household...",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Syncing your family finances, accounts, and records",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-        )
+        } else {
+            val authEmail = authAccount?.email ?: currentUser?.email ?: ""
+            val authName = authAccount?.displayName ?: currentUser?.displayName ?: ""
+            RegisterHouseholdDialog(
+                initialAdminName = authName,
+                initialAdminEmail = authEmail,
+                onLogout = {
+                    viewModel.signOut()
+                },
+                onRegister = { adminName, adminEmail, householdName, discretionaryBudget, securityPin, onResult ->
+                    viewModel.registerHousehold(
+                        adminName = adminName,
+                        adminEmail = adminEmail.ifBlank { authEmail },
+                        householdName = householdName,
+                        discretionaryBudget = discretionaryBudget,
+                        securityPin = securityPin,
+                        onResult = onResult
+                    )
+                },
+                onRestoreHousehold = {
+                    viewModel.checkAndRestoreCloudHousehold()
+                },
+                onJoinWithCode = { inviteCode, memberName, memberEmail, onResult ->
+                    viewModel.joinHousehold(inviteCode, memberName, memberEmail, onResult)
+                }
+            )
+        }
     }
 
     // Biometric / Device Credential / Security PIN Sensitivity Authentication

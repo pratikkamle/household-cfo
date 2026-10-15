@@ -43,6 +43,12 @@ interface UserDao {
     @Query("UPDATE users SET role = :newRole WHERE id = :userId")
     suspend fun updateUserRole(userId: Long, newRole: String)
 
+    @Query("SELECT * FROM users WHERE id = :id LIMIT 1")
+    suspend fun getUserByIdSync(id: Long): UserEntity?
+
     @Query("DELETE FROM users WHERE id = :id")
     suspend fun deleteUser(id: Long)
+
+    @Query("DELETE FROM users WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name)) OR (email != '' AND LOWER(TRIM(email)) = LOWER(TRIM(:email))) OR (firebaseUid != '' AND firebaseUid = :uid)")
+    suspend fun deleteUserByMatching(name: String, email: String, uid: String)
 }

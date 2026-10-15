@@ -8,8 +8,11 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 private val DarkColorScheme = darkColorScheme(
     primary = Emerald400,
@@ -72,9 +75,21 @@ fun HouseholdCfoTheme(
         else -> LightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
+    // Oppo/ColorOS devices often apply aggressive display scaling / font scaling (>1.15x)
+    // which causes financial dashboard metrics and navigation labels to look bulky and wrap letters onto new lines.
+    // Clamping the fontScale gently to 1.05f ensures a sleek, clean, compact aesthetic (matching Nothing OS)
+    // while preserving comfortable legibility and accessibility.
+    val currentDensity = LocalDensity.current
+    val clampedDensity = Density(
+        density = currentDensity.density,
+        fontScale = currentDensity.fontScale.coerceIn(0.85f, 1.0f)
     )
+
+    CompositionLocalProvider(LocalDensity provides clampedDensity) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
 }

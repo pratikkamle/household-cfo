@@ -344,30 +344,80 @@ class CloudSyncManager(
 
     suspend fun findHouseholdForUser(uid: String, email: String): String? {
         val db = firestore ?: return null
+        val cleanEmail = email.trim().lowercase()
         try {
             // 1. Check user_households by UID
-            val doc = db.collection("user_households").document(uid).get().await()
-            if (doc.exists()) {
-                val code = doc.getString("householdCode")
-                if (!code.isNullOrBlank()) return code
+            if (uid.isNotBlank()) {
+                val doc = db.collection("user_households").document(uid).get().await()
+                if (doc.exists()) {
+                    val code = doc.getString("householdCode")
+                    if (!code.isNullOrBlank()) return code
+                }
             }
             // 2. Check user_households by sanitized email
-            val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
             if (cleanEmail.isNotBlank()) {
-                val emailDoc = db.collection("user_households").document(cleanEmail).get().await()
+                val sanitized = cleanEmail.replace(".", "_").replace("@", "_at_")
+                val emailDoc = db.collection("user_households").document(sanitized).get().await()
                 if (emailDoc.exists()) {
                     val code = emailDoc.getString("householdCode")
                     if (!code.isNullOrBlank()) return code
                 }
             }
-            // 3. Check households by adminEmail
-            val query = db.collection("households")
-                .whereEqualTo("adminEmail", email.trim().lowercase())
-                .limit(1)
-                .get().await()
-            if (!query.isEmpty) {
-                val hDoc = query.documents.first()
-                return hDoc.getString("inviteCode") ?: hDoc.id
+            // 3. Check households by adminEmail (both lowercase and original)
+            if (cleanEmail.isNotBlank()) {
+                val queryLower = db.collection("households")
+                    .whereEqualTo("adminEmail", cleanEmail)
+                    .limit(1)
+                    .get().await()
+                if (!queryLower.isEmpty) {
+                    val hDoc = queryLower.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+                val queryOrig = db.collection("households")
+                    .whereEqualTo("adminEmail", email.trim())
+                    .limit(1)
+                    .get().await()
+                if (!queryOrig.isEmpty) {
+                    val hDoc = queryOrig.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+
+                // 4. Check households where memberEmails array contains user email
+                val queryMemberEmails = db.collection("households")
+                    .whereArrayContains("memberEmails", cleanEmail)
+                    .limit(1)
+                    .get().await()
+                if (!queryMemberEmails.isEmpty) {
+                    val hDoc = queryMemberEmails.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+            }
+            // 5. Check households where memberUids array contains user UID
+            if (uid.isNotBlank()) {
+                val queryMemberUids = db.collection("households")
+                    .whereArrayContains("memberUids", uid)
+                    .limit(1)
+                    .get().await()
+                if (!queryMemberUids.isEmpty) {
+                    val hDoc = queryMemberUids.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+            }
+            // 6. Deep scan recent households' members subcollection as fallback
+            val recentHouseholds = db.collection("households").limit(10).get().await()
+            for (hDoc in recentHouseholds.documents) {
+                val hCode = hDoc.getString("inviteCode") ?: hDoc.id
+                val membersSub = hDoc.reference.collection("members")
+                if (uid.isNotBlank()) {
+                    val mUidDoc = membersSub.document(uid).get().await()
+                    if (mUidDoc.exists()) return hCode
+                }
+                if (cleanEmail.isNotBlank()) {
+                    val mEmailQuery = membersSub.whereEqualTo("email", cleanEmail).limit(1).get().await()
+                    if (!mEmailQuery.isEmpty) return hCode
+                    val mEmailQueryOrig = membersSub.whereEqualTo("email", email.trim()).limit(1).get().await()
+                    if (!mEmailQueryOrig.isEmpty) return hCode
+                }
             }
         } catch (e: Exception) {
             Log.w("CloudSync", "findHouseholdForUser query failed: ${e.message}")
@@ -377,19 +427,33 @@ class CloudSyncManager(
 
     fun linkUserToHousehold(uid: String, email: String, householdCode: String, role: String, scope: CoroutineScope) {
         val db = firestore ?: return
+        val code = householdCode.trim().uppercase()
+        val cleanEmail = email.trim().lowercase()
         scope.launch(Dispatchers.IO) {
             try {
                 val data = mapOf(
-                    "householdCode" to householdCode.trim().uppercase(),
+                    "householdCode" to code,
                     "role" to role,
-                    "email" to email.trim().lowercase(),
+                    "email" to cleanEmail,
                     "uid" to uid,
                     "linkedAt" to System.currentTimeMillis()
                 )
-                db.collection("user_households").document(uid).set(data, SetOptions.merge()).await()
-                val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+                if (uid.isNotBlank()) {
+                    db.collection("user_households").document(uid).set(data, SetOptions.merge()).await()
+                }
                 if (cleanEmail.isNotBlank()) {
-                    db.collection("user_households").document(cleanEmail).set(data, SetOptions.merge()).await()
+                    val sanitized = cleanEmail.replace(".", "_").replace("@", "_at_")
+                    db.collection("user_households").document(sanitized).set(data, SetOptions.merge()).await()
+                }
+                val updates = mutableMapOf<String, Any>()
+                if (cleanEmail.isNotBlank()) {
+                    updates["memberEmails"] = com.google.firebase.firestore.FieldValue.arrayUnion(cleanEmail)
+                }
+                if (uid.isNotBlank()) {
+                    updates["memberUids"] = com.google.firebase.firestore.FieldValue.arrayUnion(uid)
+                }
+                if (updates.isNotEmpty()) {
+                    db.collection("households").document(code).set(updates, SetOptions.merge()).await()
                 }
             } catch (e: Exception) {
                 Log.w("CloudSync", "linkUserToHousehold error: ${e.message}")
@@ -529,16 +593,37 @@ class CloudSyncManager(
                 .addSnapshotListener { snapshots, error ->
                     if (error != null || snapshots == null) return@addSnapshotListener
                     scope.launch(Dispatchers.IO) {
+                        // 1. Process REMOVED document changes immediately
+                        for (change in snapshots.documentChanges) {
+                            if (change.type == com.google.firebase.firestore.DocumentChange.Type.REMOVED) {
+                                val data = change.document.data
+                                val remName = (data["name"] as? String)?.trim() ?: ""
+                                val remEmail = (data["email"] as? String)?.trim() ?: ""
+                                val remUid = (data["uid"] as? String) ?: change.document.id
+                                database.userDao().deleteUserByMatching(remName, remEmail, remUid)
+                            }
+                        }
+
+                        // 2. Track all cloud active members for full sync reconciliation
+                        val cloudNames = mutableSetOf<String>()
+                        val cloudEmails = mutableSetOf<String>()
+                        val cloudUids = mutableSetOf<String>()
+
                         for (doc in snapshots.documents) {
                             val data = doc.data ?: continue
-                            val name = data["name"] as? String ?: continue
+                            val name = (data["name"] as? String)?.trim() ?: continue
+                            if (name.isBlank()) continue
                             val role = data["role"] as? String ?: "MEMBER"
                             val colorHex = data["colorHex"] as? String ?: "#0D9488"
-                            val email = data["email"] as? String ?: ""
-                            val initial = data["initial"] as? String ?: name.take(1).uppercase()
+                            val email = (data["email"] as? String)?.trim() ?: ""
+                            val initial = (data["initial"] as? String)?.ifBlank { null } ?: name.take(1).uppercase()
                             val photoUrl = data["photoUrl"] as? String
                             val docUid = (data["uid"] as? String)?.ifBlank { null }
                                 ?: doc.id.takeIf { !it.startsWith("user_") }
+
+                            cloudNames.add(name.lowercase())
+                            if (email.isNotBlank()) cloudEmails.add(email.lowercase())
+                            if (!docUid.isNullOrBlank()) cloudUids.add(docUid)
 
                             val existing = (if (email.isNotBlank()) database.userDao().getUserByEmail(email) else null)
                                 ?: (if (!docUid.isNullOrBlank()) database.userDao().getUserByFirebaseUid(docUid) else null)
@@ -546,7 +631,7 @@ class CloudSyncManager(
 
                             if (existing != null) {
                                 val updatedPhoto = if (!photoUrl.isNullOrBlank()) photoUrl else existing.photoUrl
-                                if (existing.role != role || (email.isNotBlank() && existing.email != email) || existing.colorHex != colorHex || existing.photoUrl != updatedPhoto) {
+                                if (existing.role != role || (email.isNotBlank() && existing.email != email) || existing.colorHex != colorHex || existing.photoUrl != updatedPhoto || (docUid != null && existing.firebaseUid.isBlank())) {
                                     database.userDao().updateUser(
                                         existing.copy(
                                             role = role,
@@ -562,8 +647,8 @@ class CloudSyncManager(
                                 database.userDao().insertUser(
                                     UserEntity(
                                         householdId = 1L,
-                                        name = name.trim(),
-                                        email = email.trim(),
+                                        name = name,
+                                        email = email,
                                         role = role,
                                         initial = initial,
                                         colorHex = colorHex,
@@ -571,6 +656,24 @@ class CloudSyncManager(
                                         photoUrl = photoUrl
                                     )
                                 )
+                            }
+                        }
+
+                        // 3. Reconcile: If a local member is no longer in Firestore (and not primary household admin), remove from Room
+                        if (snapshots.documents.isNotEmpty()) {
+                            val allLocal = database.userDao().getAllUsers().first()
+                            val h = database.householdDao().getPrimaryHousehold()
+                            for (lu in allLocal) {
+                                val isPrimaryAdmin = h != null && (lu.name.equals(h.adminName, ignoreCase = true) ||
+                                        (h.adminEmail.isNotBlank() && lu.email.equals(h.adminEmail, ignoreCase = true)))
+                                if (!isPrimaryAdmin) {
+                                    val inCloud = cloudNames.contains(lu.name.lowercase()) ||
+                                            (lu.email.isNotBlank() && cloudEmails.contains(lu.email.lowercase())) ||
+                                            (lu.firebaseUid.isNotBlank() && cloudUids.contains(lu.firebaseUid))
+                                    if (!inCloud) {
+                                        database.userDao().deleteUser(lu.id)
+                                    }
+                                }
                             }
                         }
                     }
@@ -692,54 +795,100 @@ class CloudSyncManager(
                 )
                 database.householdDao().insertHousehold(localH)
 
-                // 2. Register user in household in Firestore
+                // 2. Register / Link user in household in Firestore (Deduplicate & preserve role)
                 val userUid = auth?.currentUser?.uid ?: "user_${System.currentTimeMillis()}"
-                val cleanEmail = memberEmail.trim().lowercase().replace(".", "_").replace("@", "_at_")
-                
-                // Check if user document already exists in Firestore to preserve any promoted role (Admin/Contributor)
-                val existingDoc = try {
-                    val byUid = db.collection("households").document(cleanCode)
-                        .collection("members").document(userUid).get().await()
-                    if (byUid.exists()) byUid else if (cleanEmail.isNotBlank()) {
-                        db.collection("households").document(cleanCode)
-                            .collection("members").document("user_${cleanEmail}").get().await()
-                    } else null
-                } catch (e: Exception) { null }
+                val cleanEmail = memberEmail.trim().lowercase()
+                val isAdmin = adminName.equals(memberName.trim(), ignoreCase = true) ||
+                        (doc.getString("adminEmail")?.trim()?.equals(cleanEmail, ignoreCase = true) == true)
 
-                val assignedRole = existingDoc?.getString("role")?.takeIf { it.isNotBlank() } ?: "MEMBER"
-                val assignedColor = existingDoc?.getString("colorHex")?.takeIf { it.isNotBlank() } ?: "#E11D48"
+                // Query all existing member docs in this household to check if user already exists
+                val allMemberDocs = db.collection("households").document(cleanCode)
+                    .collection("members").get().await()
+
+                val matchedDoc = allMemberDocs.documents.find { d ->
+                    val dUid = d.getString("uid") ?: d.id
+                    val dEmail = (d.getString("email") ?: "").trim().lowercase()
+                    val dName = (d.getString("name") ?: "").trim()
+                    (userUid.isNotBlank() && (dUid == userUid || d.id == userUid)) ||
+                    (cleanEmail.isNotBlank() && dEmail == cleanEmail) ||
+                    (dName.equals(memberName.trim(), ignoreCase = true))
+                }
+
+                val finalRole = when {
+                    isAdmin -> "ADMIN"
+                    matchedDoc != null -> matchedDoc.getString("role")?.takeIf { it.isNotBlank() } ?: "MEMBER"
+                    else -> "MEMBER"
+                }
+                val finalColor = matchedDoc?.getString("colorHex")?.takeIf { it.isNotBlank() } ?: "#0D9488"
+                val finalName = matchedDoc?.getString("name")?.takeIf { it.isNotBlank() } ?: memberName.trim()
+                val finalPhoto = auth?.currentUser?.photoUrl?.toString() ?: matchedDoc?.getString("photoUrl")
 
                 val memberMap = mapOf(
-                    "name" to memberName.trim(),
+                    "name" to finalName,
                     "email" to memberEmail.trim(),
-                    "role" to assignedRole,
-                    "colorHex" to assignedColor,
-                    "initial" to memberName.trim().take(1).uppercase(),
+                    "role" to finalRole,
+                    "colorHex" to finalColor,
+                    "initial" to finalName.take(1).uppercase(),
                     "uid" to userUid,
-                    "joinedAt" to System.currentTimeMillis()
+                    "photoUrl" to (finalPhoto ?: ""),
+                    "joinedAt" to (matchedDoc?.getLong("joinedAt") ?: System.currentTimeMillis())
                 )
+
+                val canonicalDocId = if (matchedDoc != null) matchedDoc.id else userUid
                 db.collection("households").document(cleanCode)
-                    .collection("members").document(userUid)
+                    .collection("members").document(canonicalDocId)
                     .set(memberMap, SetOptions.merge()).await()
 
-                if (cleanEmail.isNotBlank()) {
+                if (canonicalDocId != userUid && userUid.isNotBlank()) {
                     db.collection("households").document(cleanCode)
-                        .collection("members").document("user_${cleanEmail}")
+                        .collection("members").document(userUid)
                         .set(memberMap, SetOptions.merge()).await()
                 }
 
-                // Insert into local users table
-                database.userDao().insertUser(
-                    UserEntity(
-                        householdId = 1L,
-                        name = memberName.trim(),
-                        email = memberEmail.trim(),
-                        role = assignedRole,
-                        initial = memberName.trim().take(1).uppercase(),
-                        colorHex = assignedColor,
-                        firebaseUid = userUid
+                // Delete any duplicate member documents in cloud for this same person
+                for (otherDoc in allMemberDocs.documents) {
+                    if (otherDoc.id != canonicalDocId && otherDoc.id != userUid) {
+                        val dEmail = (otherDoc.getString("email") ?: "").trim().lowercase()
+                        val dName = (otherDoc.getString("name") ?: "").trim()
+                        val dUid = otherDoc.getString("uid") ?: ""
+                        if ((cleanEmail.isNotBlank() && dEmail == cleanEmail) ||
+                            (dName.equals(finalName, ignoreCase = true)) ||
+                            (userUid.isNotBlank() && dUid == userUid)) {
+                            try { otherDoc.reference.delete().await() } catch (_: Exception) {}
+                        }
+                    }
+                }
+
+                // Upsert in local Room database (NEVER duplicate local records)
+                val existingLocal = (if (cleanEmail.isNotBlank()) database.userDao().getUserByEmail(cleanEmail) else null)
+                    ?: (if (userUid.isNotBlank()) database.userDao().getUserByFirebaseUid(userUid) else null)
+                    ?: database.userDao().getUserByName(finalName)
+
+                if (existingLocal != null) {
+                    database.userDao().updateUser(
+                        existingLocal.copy(
+                            name = finalName,
+                            email = memberEmail.trim(),
+                            role = finalRole,
+                            colorHex = finalColor,
+                            firebaseUid = userUid,
+                            photoUrl = finalPhoto ?: existingLocal.photoUrl
+                        )
                     )
-                )
+                } else {
+                    database.userDao().insertUser(
+                        UserEntity(
+                            householdId = 1L,
+                            name = finalName,
+                            email = memberEmail.trim(),
+                            role = finalRole,
+                            initial = finalName.take(1).uppercase(),
+                            colorHex = finalColor,
+                            firebaseUid = userUid,
+                            photoUrl = finalPhoto
+                        )
+                    )
+                }
 
                 // 3. Pull existing transactions from Firestore
                 val txDocs = db.collection("households").document(cleanCode)
@@ -1023,14 +1172,77 @@ class CloudSyncManager(
         }
     }
 
-    fun deleteMember(userId: Long, householdCode: String, scope: CoroutineScope) {
+    fun deleteMember(
+        userId: Long,
+        user: UserEntity? = null,
+        householdCode: String,
+        scope: CoroutineScope
+    ) {
         val db = firestore ?: return
         val code = householdCode.ifBlank { "CFO-8821" }
         scope.launch(Dispatchers.IO) {
             try {
-                db.collection("households").document(code)
+                val batch = db.batch()
+                // 1. Delete standard user_$userId doc
+                val userRef = db.collection("households").document(code)
                     .collection("members").document("user_$userId")
-                    .delete().await()
+                batch.delete(userRef)
+
+                // 2. Delete by firebaseUid if present
+                val uid = user?.firebaseUid?.takeIf { it.isNotBlank() }
+                if (uid != null) {
+                    val uidRef = db.collection("households").document(code)
+                        .collection("members").document(uid)
+                    batch.delete(uidRef)
+                    val userHRef = db.collection("user_households").document(uid)
+                    batch.delete(userHRef)
+                }
+
+                // 3. Delete by sanitized email if present
+                val email = user?.email?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                if (email != null) {
+                    val cleanEmail = email.replace(".", "_").replace("@", "_at_")
+                    val emailRef = db.collection("households").document(code)
+                        .collection("members").document("user_$cleanEmail")
+                    batch.delete(emailRef)
+                    val emailHRef = db.collection("user_households").document(cleanEmail)
+                    batch.delete(emailHRef)
+                }
+
+                batch.commit().await()
+
+                // 4. Also scan members subcollection to purge any duplicate docs matching this user
+                val membersDocs = db.collection("households").document(code)
+                    .collection("members").get().await()
+                for (doc in membersDocs.documents) {
+                    val dName = (doc.getString("name") ?: "").trim()
+                    val dEmail = (doc.getString("email") ?: "").trim().lowercase()
+                    val dUid = (doc.getString("uid") ?: "").trim()
+
+                    val nameMatches = user != null && dName.equals(user.name.trim(), ignoreCase = true)
+                    val emailMatches = email != null && dEmail == email
+                    val uidMatches = uid != null && dUid == uid
+
+                    if (nameMatches || emailMatches || uidMatches) {
+                        try {
+                            doc.reference.delete().await()
+                        } catch (e: Exception) {
+                            Log.w("CloudSync", "Purge duplicate member doc warning: ${e.message}")
+                        }
+                    }
+                }
+
+                // 5. Update household arrays so query doesn't find removed member
+                val updates = mutableMapOf<String, Any>()
+                if (email != null) {
+                    updates["memberEmails"] = com.google.firebase.firestore.FieldValue.arrayRemove(email)
+                }
+                if (uid != null) {
+                    updates["memberUids"] = com.google.firebase.firestore.FieldValue.arrayRemove(uid)
+                }
+                if (updates.isNotEmpty()) {
+                    db.collection("households").document(code).update(updates).await()
+                }
             } catch (e: Exception) {
                 Log.w("CloudSync", "Failed to delete member from cloud: ${e.message}")
             }

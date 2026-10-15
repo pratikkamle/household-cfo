@@ -72,8 +72,14 @@ class FinanceRepository(
     suspend fun updateUser(user: UserEntity) =
         userDao.updateUser(user)
 
+    suspend fun getUserByIdSync(userId: Long): UserEntity? =
+        userDao.getUserByIdSync(userId)
+
     suspend fun deleteUser(userId: Long) =
         userDao.deleteUser(userId)
+
+    suspend fun deleteUserByMatching(name: String, email: String, uid: String) =
+        userDao.deleteUserByMatching(name, email, uid)
 
     fun getTransactionsForMonth(monthYear: String): Flow<List<TransactionEntity>> =
         transactionDao.getTransactionsByMonth(monthYear)

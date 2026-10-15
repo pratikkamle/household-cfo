@@ -17,7 +17,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
@@ -68,7 +71,8 @@ fun RegisterHouseholdDialog(
         securityPin: String,
         onResult: (Boolean, String) -> Unit
     ) -> Unit,
-    onJoinWithCode: (inviteCode: String, memberName: String, onResult: (Boolean, String) -> Unit) -> Unit = { _, _, _ -> }
+    onRestoreHousehold: (() -> Unit)? = null,
+    onJoinWithCode: (inviteCode: String, memberName: String, memberEmail: String, onResult: (Boolean, String) -> Unit) -> Unit = { _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Create Household, 1 = Join with Code
@@ -173,6 +177,50 @@ fun RegisterHouseholdDialog(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Reinstall / Existing Cloud Household Restoration Option
+                if (onRestoreHousehold != null) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onRestoreHousehold() }
+                            .testTag("reg_restore_household_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.CloudDownload,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Reinstalled the app?",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Tap to search & restore your existing household",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                     }
@@ -400,7 +448,7 @@ fun RegisterHouseholdDialog(
                             }
                             joinLoading = true
                             joinError = null
-                            onJoinWithCode(joinInviteCode, joinMemberName.trim()) { success, msg ->
+                            onJoinWithCode(joinInviteCode, joinMemberName.trim(), joinMemberEmail.trim()) { success, msg ->
                                 joinLoading = false
                                 if (!success) {
                                     joinError = msg

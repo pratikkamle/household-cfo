@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.LocalAtm
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.Button
@@ -411,8 +412,20 @@ fun EditTransactionDialog(
                             val newMonthYear = String.format(Locale.US, "%04d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
                             val acc = accounts.find { it.id == selectedAccountId }
 
+                            val matchedMember = displayMembers.find {
+                                it.displayName.equals(selectedPaidByName, ignoreCase = true) || it.id.equals(selectedPaidByName, ignoreCase = true)
+                            }
+                            val newUserId = if (matchedMember != null && matchedMember.userId != null && matchedMember.id != "JOINT") {
+                                matchedMember.userId
+                            } else if (isJoint(selectedPaidByName)) {
+                                null
+                            } else {
+                                transaction.userId
+                            }
+
                             val updated = transaction.copy(
                                 amount = newAmount,
+                                userId = newUserId,
                                 merchant = merchantText.trim().ifBlank { selectedCategory },
                                 category = selectedCategory,
                                 paidBy = selectedPaidByName.trim().uppercase(Locale.ROOT),

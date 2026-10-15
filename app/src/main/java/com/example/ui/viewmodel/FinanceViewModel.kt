@@ -137,6 +137,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _isSensitiveRevealed = MutableStateFlow(false)
     val isSensitiveRevealed: StateFlow<Boolean> = _isSensitiveRevealed.asStateFlow()
 
+    // Cloud Household Restoration Status (prevents premature register dialog on reinstall)
+    private val _isCheckingCloudHousehold = MutableStateFlow(false)
+    val isCheckingCloudHousehold: StateFlow<Boolean> = _isCheckingCloudHousehold.asStateFlow()
+
     fun toggleSensitivity() {
         _isSensitiveRevealed.value = !_isSensitiveRevealed.value
     }
@@ -237,9 +241,19 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             if (h != null) {
                 val code = h.inviteCode.ifBlank { "CFO-8821" }
                 cloudSyncManager.startRealtimeSync(code, viewModelScope)
+            } else {
+                checkAndRestoreCloudHousehold()
             }
         }
         cloudSyncManager.attemptSilentSignIn(viewModelScope)
+
+        viewModelScope.launch {
+            authAccount.collect { account ->
+                if (account != null && household.value == null) {
+                    checkAndRestoreCloudHousehold()
+                }
+            }
+        }
 
         // Ensure category budgets sum matches the household's discretionary budget
         viewModelScope.launch {
@@ -734,9 +748,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun removeMember(userId: Long) {
         viewModelScope.launch {
+            val user = users.value.find { it.id == userId } ?: repository.getUserByIdSync(userId)
             repository.deleteUser(userId)
             val code = household.value?.inviteCode?.ifBlank { "CFO-8821" } ?: "CFO-8821"
-            cloudSyncManager.deleteMember(userId, code, viewModelScope)
+            cloudSyncManager.deleteMember(userId, user, code, viewModelScope)
         }
     }
 
@@ -886,15 +901,38 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     /**
      * Join an existing household using an Invite Code
      */
-    fun joinHousehold(inviteCode: String, memberName: String, onResult: (Boolean, String) -> Unit) {
+    fun joinHousehold(
+        inviteCode: String,
+        memberName: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        joinHousehold(
+            inviteCode = inviteCode,
+            memberName = memberName,
+            memberEmail = "",
+            onResult = onResult
+        )
+    }
+
+    fun joinHousehold(
+        inviteCode: String,
+        memberName: String,
+        memberEmail: String = "",
+        onResult: (Boolean, String) -> Unit
+    ) {
+        val email = memberEmail.ifBlank {
+            authAccount.value?.email ?: cloudSyncManager.currentUser.value?.email ?: ""
+        }
         cloudSyncManager.joinHouseholdByCode(
             inviteCode = inviteCode,
             memberName = memberName,
+            memberEmail = email,
             scope = viewModelScope,
             onResult = { success, msg ->
                 if (success) {
                     viewModelScope.launch {
-                        val joinedUser = database.userDao().getUserByName(memberName.trim())
+                        val joinedUser = (if (email.isNotBlank()) database.userDao().getUserByEmail(email) else null)
+                            ?: database.userDao().getUserByName(memberName.trim())
                         if (joinedUser != null) {
                             setActiveUser(joinedUser)
                         }
@@ -1192,35 +1230,66 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun checkAndRestoreCloudHousehold(onResult: ((Boolean) -> Unit)? = null) {
+        val account = authAccount.value ?: cloudSyncManager.currentUser.value?.let {
+            AuthAccount(
+                uid = it.uid,
+                email = it.email ?: "",
+                displayName = it.displayName ?: (it.email?.substringBefore("@")?.replaceFirstChar { c -> c.uppercase() } ?: "User"),
+                isGoogle = it.providerData.any { p -> p.providerId == "google.com" },
+                photoUrl = it.photoUrl?.toString()
+            )
+        }
+        if (account == null || (account.uid.isBlank() && account.email.isBlank())) {
+            onResult?.invoke(false)
+            return
+        }
+
+        viewModelScope.launch {
+            _isCheckingCloudHousehold.value = true
+            try {
+                checkAndLoadHouseholdForUser(account)
+            } finally {
+                _isCheckingCloudHousehold.value = false
+            }
+            onResult?.invoke(household.value != null)
+        }
+    }
+
     suspend fun checkAndLoadHouseholdForUser(account: AuthAccount) {
-        // Persist photoUrl for personalization
-        if (!account.photoUrl.isNullOrBlank()) {
-            val user = if (account.email.isNotBlank()) repository.getUserByEmail(account.email) else null
-            val targetUser = user ?: repository.getPrimaryHousehold()?.let { repository.getUserByName(it.adminName) }
-            if (targetUser != null && targetUser.photoUrl != account.photoUrl) {
-                repository.updateUser(targetUser.copy(photoUrl = account.photoUrl))
+        _isCheckingCloudHousehold.value = true
+        try {
+            // Persist photoUrl for personalization
+            if (!account.photoUrl.isNullOrBlank()) {
+                val user = if (account.email.isNotBlank()) repository.getUserByEmail(account.email) else null
+                val targetUser = user ?: repository.getPrimaryHousehold()?.let { repository.getUserByName(it.adminName) }
+                if (targetUser != null && targetUser.photoUrl != account.photoUrl) {
+                    repository.updateUser(targetUser.copy(photoUrl = account.photoUrl))
+                }
             }
-        }
 
-        // 1. Check local DB for household where adminEmail == account.email
-        val localHousehold = repository.getHouseholdByAdminEmail(account.email)
-            ?: repository.getPrimaryHousehold()?.takeIf { it.adminEmail.equals(account.email, ignoreCase = true) }
+            // 1. Check local DB for household where adminEmail == account.email
+            val localHousehold = repository.getHouseholdByAdminEmail(account.email)
+                ?: repository.getPrimaryHousehold()?.takeIf { it.adminEmail.equals(account.email, ignoreCase = true) }
 
-        if (localHousehold != null) {
-            cloudSyncManager.startRealtimeSync(localHousehold.inviteCode, viewModelScope)
-            return
-        }
-
-        // 2. Check Cloud Firestore for linked household code
-        val cloudCode = cloudSyncManager.findHouseholdForUser(account.uid, account.email)
-        if (!cloudCode.isNullOrBlank()) {
-            val localByCode = repository.getHouseholdByInviteCode(cloudCode)
-            if (localByCode != null) {
-                cloudSyncManager.startRealtimeSync(cloudCode, viewModelScope)
-            } else {
-                cloudSyncManager.joinHouseholdByCode(cloudCode, account.displayName, account.email, viewModelScope) { _, _ -> }
+            if (localHousehold != null) {
+                cloudSyncManager.startRealtimeSync(localHousehold.inviteCode, viewModelScope)
+                return
             }
-            return
+
+            // 2. Check Cloud Firestore for linked household code
+            val cloudCode = cloudSyncManager.findHouseholdForUser(account.uid, account.email)
+            if (!cloudCode.isNullOrBlank()) {
+                val localByCode = repository.getHouseholdByInviteCode(cloudCode)
+                if (localByCode != null) {
+                    cloudSyncManager.startRealtimeSync(cloudCode, viewModelScope)
+                } else {
+                    cloudSyncManager.joinHouseholdByCode(cloudCode, account.displayName, account.email, viewModelScope) { _, _ -> }
+                }
+                return
+            }
+        } finally {
+            _isCheckingCloudHousehold.value = false
         }
     }
 
