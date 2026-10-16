@@ -180,7 +180,7 @@ fun DashboardScreen(
         if (members.isNotEmpty()) (jointInvestmentsRules + jointInvestmentsTx) / members.size else 0.0
     }
 
-    val activeDisplaySummary = remember(selectedMemberName, summary, transactions, recurringRules, jointSplitPerMember, jointScheduledPerMember, jointInvestmentsPerMember) {
+    val activeDisplaySummary = remember(selectedMemberName, summary, transactions, recurringRules, accounts, jointSplitPerMember, jointScheduledPerMember, jointInvestmentsPerMember) {
         if (isAllHousehold) {
             summary
         } else {
@@ -230,7 +230,20 @@ fun DashboardScreen(
                 .sumOf { it.amount }
             val mTotalRandom = mOwnRandom + jointSplitPerMember
 
-            val mAvailable = mTotalIncome - (mScheduled + mTotalRandom + mInvestments)
+            val mLiquidAccounts = accounts
+                .filter { it.isActive && (it.accountType == "BANK" || it.accountType == "CASH" || it.accountType == "DEBIT_CARD") && (matchesMember(it.holder, memberName, members) || isJoint(it.holder)) }
+                .sumOf { acc -> if (isJoint(acc.holder) && members.isNotEmpty()) acc.balance / members.size else acc.balance }
+
+            val mCreditDues = accounts
+                .filter { it.isActive && it.accountType == "CREDIT_CARD" && (matchesMember(it.holder, memberName, members) || isJoint(it.holder)) }
+                .sumOf { card ->
+                    val amt = if (card.statementDueAmount > 0) card.statementDueAmount else if (card.balance < 0) -card.balance else card.balance
+                    if (isJoint(card.holder) && members.isNotEmpty()) amt / members.size else amt
+                }
+
+            val mAvailable = mTotalIncome - (mScheduled + mTotalRandom + mInvestments + mCreditDues)
+            val mNetCashflow = mLiquidAccounts + mAvailable
+
             val memberBudgetShare = if (members.isNotEmpty()) summary.discretionaryBudget / members.size else summary.discretionaryBudget
             val memberRemainingShare = maxOf(0.0, memberBudgetShare - mTotalRandom)
 
@@ -241,7 +254,10 @@ fun DashboardScreen(
                 investments = mInvestments,
                 availableBalance = mAvailable,
                 discretionaryBudget = memberBudgetShare,
-                remainingDiscretionary = memberRemainingShare
+                remainingDiscretionary = memberRemainingShare,
+                liquidAccountsBalance = mLiquidAccounts,
+                creditCardDues = mCreditDues,
+                netCashflowPosition = mNetCashflow
             )
         }
     }
@@ -299,13 +315,14 @@ fun DashboardScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.fillMaxWidth()) {
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = if (isAllHousehold) "AVAILABLE CASH FLOW (ALL HOUSEHOLD)" else "AVAILABLE CASH FLOW (${selectedMemberName!!.uppercase()})",
+                                    text = if (isAllHousehold) "AVAILABLE CASH FLOW & BANK POSITION" else "AVAILABLE CASH FLOW (${selectedMemberName!!.uppercase()})",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -323,12 +340,63 @@ fun DashboardScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(2.dp))
+                            val mainCashflowValue = if (activeDisplaySummary.liquidAccountsBalance > 0) activeDisplaySummary.netCashflowPosition else activeDisplaySummary.availableBalance
                             Text(
-                                text = if (isSensitiveRevealed) CurrencyFormatter.formatInr(activeDisplaySummary.availableBalance) else "₹ ••••••••",
+                                text = if (isSensitiveRevealed) CurrencyFormatter.formatInr(mainCashflowValue) else "₹ ••••••••",
                                 style = MaterialTheme.typography.headlineMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = if (activeDisplaySummary.availableBalance >= 0) Emerald500 else ExpenseRed
+                                color = if (mainCashflowValue >= 0) Emerald500 else ExpenseRed
                             )
+
+                            if (activeDisplaySummary.liquidAccountsBalance > 0 || activeDisplaySummary.creditCardDues > 0) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Emerald500.copy(alpha = 0.12f)
+                                    ) {
+                                        Text(
+                                            text = if (isSensitiveRevealed) "Bank Balance: ${CurrencyFormatter.formatInr(activeDisplaySummary.liquidAccountsBalance)}" else "Bank: ₹••••••",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Emerald500,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                    ) {
+                                        Text(
+                                            text = if (isSensitiveRevealed) "Month Net: ${if (activeDisplaySummary.availableBalance >= 0) "+" else ""}${CurrencyFormatter.formatInr(activeDisplaySummary.availableBalance)}" else "Month: ₹••••••",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                        )
+                                    }
+
+                                    if (activeDisplaySummary.creditCardDues > 0) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = ExpenseRed.copy(alpha = 0.12f)
+                                        ) {
+                                            Text(
+                                                text = if (isSensitiveRevealed) "CC Dues: -${CurrencyFormatter.formatInr(activeDisplaySummary.creditCardDues)}" else "CC: ₹••••••",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = ExpenseRed,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -868,7 +936,8 @@ fun TransactionCard(
     onEdit: (() -> Unit)? = null,
     onDelete: () -> Unit,
     canDelete: Boolean = true,
-    canEdit: Boolean = true
+    canEdit: Boolean = true,
+    isSensitiveRevealed: Boolean = true
 ) {
     val fullDateTimeFormat = remember { SimpleDateFormat("EEE, dd MMM yyyy • hh:mm a", Locale.getDefault()) }
     val fullDateStr = fullDateTimeFormat.format(Date(transaction.timestamp))
@@ -936,8 +1005,15 @@ fun TransactionCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    val amountText = if (isIncome) {
+                        if (isSensitiveRevealed) "+${CurrencyFormatter.formatInr(transaction.amount)}"
+                        else "+₹ ••••••••"
+                    } else {
+                        "-${CurrencyFormatter.formatInr(transaction.amount)}"
+                    }
+
                     Text(
-                        text = "${if (isIncome) "+" else "-"}${CurrencyFormatter.formatInr(transaction.amount)}",
+                        text = amountText,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 15.sp,
                         color = if (isIncome) IncomeGreen else ExpenseRed

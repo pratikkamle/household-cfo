@@ -625,9 +625,7 @@ fun ReportsScreen(
     if (showAuthDialogForReset) {
         SensitivityAuthDialog(
             title = "Admin Security Required",
-            subtitle = "Authenticate with biometric or PIN to confirm resetting database tables.",
-            expectedPin = expectedPin,
-            onSetPin = onSetPin,
+            subtitle = "Authenticate using your device lock (PIN, Password, Pattern) or Biometric to confirm resetting database tables.",
             onAuthenticated = {
                 showAuthDialogForReset = false
                 showResetDialog = true

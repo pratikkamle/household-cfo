@@ -24,7 +24,7 @@ import kotlinx.coroutines.withContext
         CategoryBudgetEntity::class,
         FinancialGoalEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -70,6 +70,14 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        private val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE accounts ADD COLUMN billingCycleDay INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE accounts ADD COLUMN paymentDueDateDay INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE accounts ADD COLUMN statementDueAmount REAL NOT NULL DEFAULT 0.0")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -77,6 +85,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "household_cfo.db"
                 )
+                    .addMigrations(MIGRATION_8_9)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

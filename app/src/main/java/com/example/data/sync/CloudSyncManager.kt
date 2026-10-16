@@ -721,7 +721,10 @@ class CloudSyncManager(
                                         accountNumberMask = data["accountNumberMask"] as? String ?: "",
                                         institution = data["institution"] as? String ?: "",
                                         notes = data["notes"] as? String ?: "",
-                                        creditLimit = (data["creditLimit"] as? Number)?.toDouble() ?: 0.0
+                                        creditLimit = (data["creditLimit"] as? Number)?.toDouble() ?: 0.0,
+                                        billingCycleDay = (data["billingCycleDay"] as? Number)?.toInt(),
+                                        paymentDueDateDay = (data["paymentDueDateDay"] as? Number)?.toInt(),
+                                        statementDueAmount = (data["statementDueAmount"] as? Number)?.toDouble() ?: 0.0
                                     )
                                     database.accountDao().insertAccount(acc)
                                 }
@@ -1146,6 +1149,9 @@ class CloudSyncManager(
                     "institution" to account.institution,
                     "notes" to account.notes,
                     "creditLimit" to account.creditLimit,
+                    "billingCycleDay" to account.billingCycleDay,
+                    "paymentDueDateDay" to account.paymentDueDateDay,
+                    "statementDueAmount" to account.statementDueAmount,
                     "userId" to account.userId,
                     "updatedAt" to System.currentTimeMillis()
                 )

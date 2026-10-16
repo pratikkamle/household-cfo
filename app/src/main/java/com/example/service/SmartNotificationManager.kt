@@ -63,45 +63,70 @@ object SmartNotificationManager {
     }
 
     fun onNotificationReceived(context: Context, sbn: StatusBarNotification) {
-        val notification = sbn.notification ?: return
-        val extras = notification.extras ?: return
-        val packageName = sbn.packageName ?: ""
+        try {
+            val notification = sbn.notification ?: return
+            val extras = try {
+                notification.extras
+            } catch (t: Throwable) {
+                null
+            } ?: return
+            val packageName = sbn.packageName ?: ""
 
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
+            // Ignore system or non-financial app packages early (e.g. android system, download manager, email clients without bank keywords)
+            if (packageName.startsWith("com.android.") || packageName == "android") return
 
-        val fullBody = when {
-            bigText.isNotBlank() -> bigText
-            text.isNotBlank() -> text
-            else -> ""
-        }
+            val title = try {
+                extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+            } catch (t: Throwable) {
+                ""
+            }
+            val text = try {
+                extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+            } catch (t: Throwable) {
+                ""
+            }
+            val bigText = try {
+                extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
+            } catch (t: Throwable) {
+                ""
+            }
 
-        if (fullBody.isBlank() && title.isBlank()) return
+            val fullBody = when {
+                bigText.isNotBlank() -> bigText
+                text.isNotBlank() -> text
+                else -> ""
+            }
 
-        val combinedContent = "$title $fullBody".trim()
+            if (fullBody.isBlank() && title.isBlank()) return
 
-        // Filter financial transaction keywords or financial packages
-        if (!isTransactionRelated(combinedContent, packageName)) return
+            val combinedContent = "$title $fullBody".trim()
 
-        val parsed = SmartTransactionParser.parse(combinedContent)
+            // Filter financial transaction keywords or financial packages
+            if (!isTransactionRelated(combinedContent, packageName)) return
 
-        val appName = inferAppName(packageName, title)
+            val parsed = SmartTransactionParser.parse(combinedContent)
+            // Strictly ignore non-transaction alerts, general emails, and messages without real transaction amounts
+            if (parsed == null || parsed.amount <= 0.0) return
 
-        val item = CapturedNotification(
-            appName = appName,
-            packageName = packageName,
-            title = title,
-            body = fullBody,
-            timestamp = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis(),
-            parsedTransaction = parsed
-        )
+            val appName = inferAppName(packageName, title)
 
-        // Avoid exact duplicates in list within recent items
-        val current = _capturedNotifications.value
-        val isDuplicate = current.any { it.body == item.body && Math.abs(it.timestamp - item.timestamp) < 5000 }
-        if (!isDuplicate) {
-            _capturedNotifications.value = listOf(item) + current.take(29)
+            val item = CapturedNotification(
+                appName = appName,
+                packageName = packageName,
+                title = title,
+                body = fullBody,
+                timestamp = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                parsedTransaction = parsed
+            )
+
+            // Avoid exact duplicates in list within recent items
+            val current = _capturedNotifications.value
+            val isDuplicate = current.any { it.body == item.body && Math.abs(it.timestamp - item.timestamp) < 5000 }
+            if (!isDuplicate) {
+                _capturedNotifications.value = listOf(item) + current.take(29)
+            }
+        } catch (t: Throwable) {
+            android.util.Log.w("SmartNotificationMgr", "Safely caught notification error: ${t.message}")
         }
     }
 

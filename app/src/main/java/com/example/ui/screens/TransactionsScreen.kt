@@ -54,6 +54,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import com.example.ui.theme.Emerald500
+import com.example.ui.theme.IncomeGreen
 import com.example.data.model.AccountEntity
 import com.example.data.model.MemberProfile
 import com.example.data.model.TransactionEntity
@@ -72,6 +76,8 @@ fun TransactionsScreen(
     accounts: List<AccountEntity> = emptyList(),
     members: List<MemberProfile> = emptyList(),
     onUpdateTransaction: (TransactionEntity) -> Unit = {},
+    isSensitiveRevealed: Boolean = false,
+    onToggleSensitivity: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -129,7 +135,7 @@ fun TransactionsScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Transactions Management",
                         style = MaterialTheme.typography.headlineSmall,
@@ -142,17 +148,36 @@ fun TransactionsScreen(
                     )
                 }
 
-                if (currentUserRole.canAddTransactions) {
-                    Button(
-                        onClick = onOpenAddExpense,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(38.dp).testTag("tx_screen_add_btn")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = onToggleSensitivity,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .testTag("tx_toggle_sensitivity")
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Icon(
+                            imageVector = if (isSensitiveRevealed) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = if (isSensitiveRevealed) "Hide Credited Details" else "Show Credited Details",
+                            tint = if (isSensitiveRevealed) Emerald500 else MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    if (currentUserRole.canAddTransactions) {
+                        Button(
+                            onClick = onOpenAddExpense,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.height(38.dp).testTag("tx_screen_add_btn")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -182,7 +207,12 @@ fun TransactionsScreen(
                     }
                     Column {
                         Text("Total Income", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(CurrencyFormatter.formatInr(totalIncome), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = com.example.ui.theme.IncomeGreen)
+                        Text(
+                            text = if (isSensitiveRevealed) CurrencyFormatter.formatInr(totalIncome) else "₹ ••••••••",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = IncomeGreen
+                        )
                     }
                 }
             }
@@ -259,7 +289,8 @@ fun TransactionsScreen(
                     onEdit = { transactionToEdit = tx },
                     onDelete = { transactionToDelete = tx },
                     canDelete = currentUserRole.canAddTransactions,
-                    canEdit = currentUserRole.canAddTransactions
+                    canEdit = currentUserRole.canAddTransactions,
+                    isSensitiveRevealed = isSensitiveRevealed
                 )
             }
 

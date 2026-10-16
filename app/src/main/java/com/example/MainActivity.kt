@@ -204,6 +204,12 @@ fun MainApp(viewModel: FinanceViewModel) {
         viewModel.setTab(0)
     }
 
+    androidx.compose.runtime.LaunchedEffect(accounts) {
+        if (accounts.isNotEmpty()) {
+            com.example.util.CreditCardBillReminderHelper.checkAndNotifyBillReminders(context, accounts)
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -424,18 +430,7 @@ fun MainApp(viewModel: FinanceViewModel) {
                         }
                     },
                     actions = {
-                        if (currentTab == 6) {
-                            IconButton(
-                                onClick = { viewModel.setTab(0) },
-                                modifier = Modifier.testTag("top_cfo_close_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Close CFO Review",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } else {
+                        if (currentTab != 6) {
                             // CFO Review button on the top right
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
@@ -653,8 +648,6 @@ fun MainApp(viewModel: FinanceViewModel) {
                                     showSensitivityAuthDialog = true
                                 }
                             },
-                            expectedPin = household?.securityPin?.trim() ?: "",
-                            onSetPin = { viewModel.updateHouseholdSecurityPin(it) },
                             onAddRecurring = { viewModel.addRecurringRule(it) },
                             onUpdateRecurring = { viewModel.updateRecurringRule(it) },
                             onDeleteRecurring = { viewModel.deleteRecurringRule(it.id) }
@@ -681,9 +674,7 @@ fun MainApp(viewModel: FinanceViewModel) {
                             accounts = accounts,
                             onExportCsv = { viewModel.exportCsvData() },
                             onResetDatabase = { reseed -> viewModel.resetDatabase(reseed) },
-                            currentUserRole = activeUserRole,
-                            expectedPin = household?.securityPin?.trim() ?: "",
-                            onSetPin = { viewModel.updateHouseholdSecurityPin(it) }
+                            currentUserRole = activeUserRole
                         )
                         4 -> AccountsScreen(
                             accounts = accounts,
@@ -697,7 +688,7 @@ fun MainApp(viewModel: FinanceViewModel) {
                                     showSensitivityAuthDialog = true
                                 }
                             },
-                            onAddAccount = { name, holder, type, bal, mask, inst, notes, limit, uid ->
+                            onAddAccount = { name, holder, type, bal, mask, inst, notes, limit, cycleDay, dueDay, stmtDue, uid ->
                                 viewModel.addAccount(
                                     name = name,
                                     holder = holder,
@@ -707,6 +698,9 @@ fun MainApp(viewModel: FinanceViewModel) {
                                     institution = inst,
                                     notes = notes,
                                     creditLimit = limit,
+                                    billingCycleDay = cycleDay,
+                                    paymentDueDateDay = dueDay,
+                                    statementDueAmount = stmtDue,
                                     userId = uid
                                 )
                             },
@@ -797,22 +791,6 @@ fun MainApp(viewModel: FinanceViewModel) {
         )
     }
 
-    if (isCfoAdvisorOpen) {
-        val report = viewModel.generateCfoReport()
-        CfoAdvisorDialog(
-            report = report,
-            goals = goals,
-            monthSummary = summary,
-            onAddGoal = { title, cat, target, saved, months, prio, notes ->
-                viewModel.addGoal(title, cat, target, saved, months, prio, notes)
-            },
-            onDeleteGoal = { viewModel.deleteGoal(it) },
-            onAddGoalContribution = { id, amt -> viewModel.addGoalContribution(id, amt) },
-            onToggleGoalCompleted = { viewModel.toggleGoalCompleted(it) },
-            onSimulateGoal = { title, target, saved, months -> viewModel.simulateGoal(title, target, saved, months) },
-            onDismiss = { viewModel.closeCfoAdvisor() }
-        )
-    }
 
     if (isHouseholdHubOpen) {
         HouseholdHubDialog(
@@ -835,8 +813,8 @@ fun MainApp(viewModel: FinanceViewModel) {
             },
             onUpdateHouseholdName = { viewModel.updateHouseholdName(it) },
             onShareInvite = { viewModel.shareHouseholdInvite(it) },
-            onJoinHousehold = { code, name, onResult ->
-                viewModel.joinHousehold(code, name, onResult)
+            onJoinHousehold = { code, name, email, onResult ->
+                viewModel.joinHousehold(code, name, email, onResult)
             },
             onOpenEditBudgetPlan = {
                 viewModel.closeHouseholdHub()
@@ -923,15 +901,11 @@ fun MainApp(viewModel: FinanceViewModel) {
         }
     }
 
-    // Biometric / Device Credential / Security PIN Sensitivity Authentication
+    // Device Security (PIN / Password / Pattern / Biometric) Authentication
     if (showSensitivityAuthDialog) {
         SensitivityAuthDialog(
-            title = "Device Security & PIN Verification",
-            subtitle = "Authenticate using fingerprint, device lock, or security PIN to view sensitive balances.",
-            expectedPin = household?.securityPin?.trim() ?: "",
-            onSetPin = { newPin ->
-                viewModel.updateHouseholdSecurityPin(newPin)
-            },
+            title = "Device Security Verification",
+            subtitle = "Authenticate using your device lock (PIN, Password, Pattern) or Biometric to access sensitive data.",
             onAuthenticated = {
                 viewModel.setSensitivityRevealed(true)
                 showSensitivityAuthDialog = false

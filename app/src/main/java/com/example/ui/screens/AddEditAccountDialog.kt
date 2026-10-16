@@ -104,6 +104,9 @@ fun AddEditAccountDialog(
         institution: String,
         notes: String,
         creditLimit: Double,
+        billingCycleDay: Int?,
+        paymentDueDateDay: Int?,
+        statementDueAmount: Double,
         userId: Long?
     ) -> Unit,
     onDelete: ((Long) -> Unit)? = null,
@@ -128,6 +131,15 @@ fun AddEditAccountDialog(
     }
     var creditLimitText by remember {
         mutableStateOf(if (initialAccount != null && initialAccount.creditLimit > 0) initialAccount.creditLimit.toString() else "")
+    }
+    var billingCycleDayText by remember {
+        mutableStateOf(initialAccount?.billingCycleDay?.toString() ?: "")
+    }
+    var paymentDueDateDayText by remember {
+        mutableStateOf(initialAccount?.paymentDueDateDay?.toString() ?: "")
+    }
+    var statementDueAmountText by remember {
+        mutableStateOf(if (initialAccount != null && initialAccount.statementDueAmount > 0) initialAccount.statementDueAmount.toString() else "")
     }
     var notes by remember {
         mutableStateOf(initialAccount?.notes ?: "")
@@ -313,18 +325,88 @@ fun AddEditAccountDialog(
                     )
                 }
 
-                // Credit Limit (if Credit Card)
+                // Credit Card Specific Fields: Credit Limit, Billing Cycle & Payment Due Date
                 if (selectedType == "CREDIT_CARD") {
-                    OutlinedTextField(
-                        value = creditLimitText,
-                        onValueChange = { creditLimitText = it },
-                        label = { Text("Total Credit Limit (₹)") },
-                        placeholder = { Text("e.g. 150000") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = creditLimitText,
+                            onValueChange = { creditLimitText = it },
+                            label = { Text("Total Credit Limit (₹)") },
+                            placeholder = { Text("e.g. 150000") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth().testTag("credit_card_limit_input"),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = billingCycleDayText,
+                                onValueChange = {
+                                    val num = it.filter { c -> c.isDigit() }
+                                    if (num.isEmpty() || (num.toIntOrNull() ?: 0) in 1..31) {
+                                        billingCycleDayText = num
+                                    }
+                                },
+                                label = { Text("Bill Cycle Day") },
+                                placeholder = { Text("e.g. 15") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f).testTag("credit_card_cycle_day_input"),
+                                shape = RoundedCornerShape(12.dp),
+                                singleLine = true
+                            )
+
+                            OutlinedTextField(
+                                value = paymentDueDateDayText,
+                                onValueChange = {
+                                    val num = it.filter { c -> c.isDigit() }
+                                    if (num.isEmpty() || (num.toIntOrNull() ?: 0) in 1..31) {
+                                        paymentDueDateDayText = num
+                                    }
+                                },
+                                label = { Text("Payment Due Day") },
+                                placeholder = { Text("e.g. 5") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f).testTag("credit_card_due_day_input"),
+                                shape = RoundedCornerShape(12.dp),
+                                singleLine = true
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = statementDueAmountText,
+                            onValueChange = { statementDueAmountText = it },
+                            label = { Text("Current Statement Due Payment (₹)") },
+                            placeholder = { Text("e.g. 12450 (Tallied into Cashflow)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth().testTag("credit_card_due_amount_input"),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.CreditCard, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                Text(
+                                    text = "Payment due dates trigger automatic bill reminders & tally into the monthly cashflow calculation.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // Notes Field
@@ -378,6 +460,9 @@ fun AddEditAccountDialog(
                                 }
                                 val bal = balanceText.toDoubleOrNull() ?: 0.0
                                 val limit = creditLimitText.toDoubleOrNull() ?: 0.0
+                                val cycleDay = billingCycleDayText.toIntOrNull()
+                                val dueDay = paymentDueDateDayText.toIntOrNull()
+                                val statementDue = statementDueAmountText.toDoubleOrNull() ?: if (selectedType == "CREDIT_CARD" && bal > 0) bal else 0.0
                                 val matchedUser = members.find { it.displayName.equals(selectedHolderName, ignoreCase = true) }
 
                                 onSave(
@@ -390,6 +475,9 @@ fun AddEditAccountDialog(
                                     institution.trim(),
                                     notes.trim(),
                                     limit,
+                                    cycleDay,
+                                    dueDay,
+                                    statementDue,
                                     matchedUser?.userId
                                 )
                                 onDismiss()

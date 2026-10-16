@@ -79,14 +79,22 @@ fun AccountsScreen(
         institution: String,
         notes: String,
         creditLimit: Double,
+        billingCycleDay: Int?,
+        paymentDueDateDay: Int?,
+        statementDueAmount: Double,
         userId: Long?
     ) -> Unit,
     onUpdateAccount: (AccountEntity) -> Unit,
     onDeleteAccount: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var isAddDialogOpen by remember { mutableStateOf(false) }
     var editingAccount by remember { mutableStateOf<AccountEntity?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(accounts) {
+        com.example.util.CreditCardBillReminderHelper.checkAndNotifyBillReminders(context, accounts)
+    }
 
     // Check Role Access: Only ADMIN and CONTRIBUTOR can view or manage Accounts
     if (!currentUserRole.canViewAccounts) {
@@ -95,11 +103,15 @@ fun AccountsScreen(
     }
 
     // Totals
-    val totalBankLiquidity = accounts.filter { it.accountType == "BANK" || it.accountType == "CASH" }.sumOf { it.balance }
+    val totalBankLiquidity = accounts.filter { it.accountType == "BANK" || it.accountType == "CASH" || it.accountType == "DEBIT_CARD" }.sumOf { it.balance }
     val totalInvestments = accounts.filter {
         it.accountType in listOf("INVESTMENT", "LIC_INSURANCE", "NPS", "EPF_PPF", "FIXED_DEPOSIT", "GOLD", "OTHER")
     }.sumOf { it.balance }
-    val totalCreditDues = accounts.filter { it.accountType == "CREDIT_CARD" }.sumOf { -it.balance }
+    val totalCreditDues = accounts.filter { it.accountType == "CREDIT_CARD" }.sumOf { card ->
+        if (card.statementDueAmount > 0) card.statementDueAmount
+        else if (card.balance < 0) -card.balance
+        else card.balance
+    }
 
     LazyColumn(
         modifier = modifier
@@ -353,8 +365,8 @@ fun AccountsScreen(
         AddEditAccountDialog(
             initialAccount = null,
             members = members,
-            onSave = { _, name, holder, type, bal, mask, inst, notes, limit, uId ->
-                onAddAccount(name, holder, type, bal, mask, inst, notes, limit, uId)
+            onSave = { _, name, holder, type, bal, mask, inst, notes, limit, cycleDay, dueDay, stmtDue, uId ->
+                onAddAccount(name, holder, type, bal, mask, inst, notes, limit, cycleDay, dueDay, stmtDue, uId)
             },
             onDismiss = { isAddDialogOpen = false }
         )
@@ -365,7 +377,7 @@ fun AccountsScreen(
         AddEditAccountDialog(
             initialAccount = acc,
             members = members,
-            onSave = { id, name, holder, type, bal, mask, inst, notes, limit, uId ->
+            onSave = { id, name, holder, type, bal, mask, inst, notes, limit, cycleDay, dueDay, stmtDue, uId ->
                 onUpdateAccount(
                     acc.copy(
                         name = name,
@@ -376,6 +388,9 @@ fun AccountsScreen(
                         institution = inst,
                         notes = notes,
                         creditLimit = limit,
+                        billingCycleDay = cycleDay,
+                        paymentDueDateDay = dueDay,
+                        statementDueAmount = stmtDue,
                         userId = uId
                     )
                 )
@@ -473,6 +488,49 @@ fun AccountItemCard(
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.primary
                         )
+                    }
+
+                    if (account.accountType == "CREDIT_CARD") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (account.billingCycleDay != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Text(
+                                        text = "Cycle: ${CurrencyFormatter.formatDayOfMonth(account.billingCycleDay)}",
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (account.paymentDueDateDay != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = ExpenseRed.copy(alpha = 0.12f)
+                                ) {
+                                    Text(
+                                        text = "Due: ${CurrencyFormatter.formatDayOfMonth(account.paymentDueDateDay)}",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ExpenseRed,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        if (account.statementDueAmount > 0) {
+                            Text(
+                                text = if (isSensitiveRevealed) "Statement Due: ${CurrencyFormatter.formatInr(account.statementDueAmount)}" else "Statement Due: ₹••••••",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ExpenseRed
+                            )
+                        }
                     }
                 }
             }

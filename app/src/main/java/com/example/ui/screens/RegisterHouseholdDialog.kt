@@ -82,7 +82,6 @@ fun RegisterHouseholdDialog(
     var adminEmail by remember { mutableStateOf(initialAdminEmail) }
     var householdName by remember { mutableStateOf("") }
     var budgetText by remember { mutableStateOf("") }
-    var securityPin by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     // Join tab states
@@ -306,30 +305,39 @@ fun RegisterHouseholdDialog(
                         singleLine = true
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = budgetText,
-                            onValueChange = { budgetText = it },
-                            label = { Text("Monthly Discretionary (₹)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1.2f).testTag("reg_budget"),
-                            shape = RoundedCornerShape(12.dp),
-                            singleLine = true
-                        )
+                    OutlinedTextField(
+                        value = budgetText,
+                        onValueChange = { budgetText = it },
+                        label = { Text("Monthly Discretionary (₹)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth().testTag("reg_budget"),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
 
-                        OutlinedTextField(
-                            value = securityPin,
-                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) securityPin = it },
-                            label = { Text("Security PIN") },
-                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            modifier = Modifier.weight(0.9f).testTag("reg_security_pin"),
-                            shape = RoundedCornerShape(12.dp),
-                            singleLine = true
-                        )
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Shield,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Secured by your phone's screen lock (PIN, Password, Pattern) & Biometrics. No separate in-app PIN needed.",
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                lineHeight = 16.sp
+                            )
+                        }
                     }
 
                     errorMessage?.let { err ->
@@ -347,13 +355,12 @@ fun RegisterHouseholdDialog(
                                 return@Button
                             }
                             val budget = budgetText.toDoubleOrNull() ?: 50000.0
-                            val finalPin = if (securityPin.isNotBlank()) securityPin.trim() else ""
                             onRegister(
                                 adminName.trim(),
                                 adminEmail.trim(),
                                 householdName.trim(),
                                 budget,
-                                finalPin
+                                ""
                             ) { success, msg ->
                                 if (!success) {
                                     errorMessage = msg
