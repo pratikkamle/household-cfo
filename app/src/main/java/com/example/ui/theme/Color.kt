@@ -2,7 +2,6 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Household CFO Palette: Luxury Slate & Emerald with Ocean Teal & Rose Pink accents
 val Emerald900 = Color(0xFF064E3B)
 val Emerald700 = Color(0xFF047857)
 val Emerald600 = Color(0xFF059669)
@@ -20,23 +19,26 @@ val Slate200 = Color(0xFFE2E8F0)
 val Slate100 = Color(0xFFF1F5F9)
 val Slate50 = Color(0xFFF8FAFC)
 
-// Member Accent Colors
-val OceanTeal = Color(0xFF0284C7)      // Ocean Teal Blue
-val OceanTealLight = Color(0xFFBAE6FD)
-val RosePink = Color(0xFFE11D48)       // Rich Rose Pink
-val RosePinkLight = Color(0xFFFECDD3)
-val JointPurple = Color(0xFF7C3AED)     // Regal Violet
-val JointPurpleLight = Color(0xFFDDD6FE)
+val OceanTeal = Color(0xFF0D9488)
+val OceanTealLight = Color(0xFFCCFBF1)
 
-// Financial Metrics Colors
-val IncomeGreen = Color(0xFF059669)     // 🟢 Income
+val RosePink = Color(0xFFE11D48)
+val RosePinkLight = Color(0xFFFFE4E6)
+
+val JointPurple = Color(0xFF7C3AED)
+val JointPurpleLight = Color(0xFFEDE9FE)
+
+val IncomeGreen = Color(0xFF059669)
 val IncomeGreenLight = Color(0xFFD1FAE5)
-val ExpenseRed = Color(0xFFDC2626)      // 🔴 Expense
-val ExpenseRedLight = Color(0xFFFEE2E2)
-val InvestmentBlue = Color(0xFF2563EB)  // 🔵 Investment
-val InvestmentBlueLight = Color(0xFFDBEAFE)
-val UpcomingOrange = Color(0xFFD97706)  // 🟠 Upcoming
-val UpcomingOrangeLight = Color(0xFFFEF3C7)
 
-val GoldAccent = Color(0xFFF59E0B)
+val ExpenseRed = Color(0xFFDC2626)
+val ExpenseRedLight = Color(0xFFFEE2E2)
+
+val InvestmentBlue = Color(0xFF2563EB)
+val InvestmentBlueLight = Color(0xFFDBEAFE)
+
+val UpcomingOrange = Color(0xFFEA580C)
+val UpcomingOrangeLight = Color(0xFFFFEDD5)
+
+val GoldAccent = Color(0xFFD97706)
 val GoldAccentLight = Color(0xFFFEF3C7)

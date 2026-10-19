@@ -1,28 +1,35 @@
 package com.example
 
 import android.app.Application
+import android.content.res.Resources
+import android.os.BadParcelableException
+import android.os.DeadSystemException
 import android.util.Log
 import com.google.firebase.FirebaseApp
+import java.util.Locale
 
 class HouseholdCfoApp : Application() {
     override fun onCreate() {
         super.onCreate()
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            Log.e("HouseholdCfoCrash", "Caught uncaught exception on thread ${thread.name}: ${throwable.message}", throwable)
-            val msg = throwable.message?.lowercase() ?: ""
-            val isOemKnownBug = throwable is android.os.BadParcelableException ||
-                    throwable is android.os.DeadSystemException ||
-                    throwable is android.content.res.Resources.NotFoundException ||
-                    msg.contains("coloros") ||
-                    msg.contains("oppo") ||
-                    msg.contains("notificationlistener") ||
-                    msg.contains("badtokenexception") ||
-                    msg.contains("badparcelable")
-            if (!isOemKnownBug) {
-                defaultHandler?.uncaughtException(thread, throwable)
-            } else {
+            val threadName = thread.name
+            val message = throwable.message ?: ""
+            Log.e("HouseholdCfoCrash", "Caught uncaught exception on thread $threadName: $message", throwable)
+            val lowerMsg = message.lowercase(Locale.ROOT)
+            val isOemIssue = throwable is BadParcelableException ||
+                    throwable is DeadSystemException ||
+                    throwable is Resources.NotFoundException ||
+                    lowerMsg.contains("coloros") ||
+                    lowerMsg.contains("oppo") ||
+                    lowerMsg.contains("notificationlistener") ||
+                    lowerMsg.contains("badtokenexception") ||
+                    lowerMsg.contains("badparcelable")
+
+            if (isOemIssue) {
                 Log.w("HouseholdCfoCrash", "Suppressed OEM/ColorOS background crash to keep app alive: ${throwable.message}")
+            } else {
+                defaultHandler?.uncaughtException(thread, throwable)
             }
         }
 

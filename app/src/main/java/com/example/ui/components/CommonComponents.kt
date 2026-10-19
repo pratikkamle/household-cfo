@@ -1,389 +1,385 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.TextUnit
-import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.DirectionsRun
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Surface
-import androidx.compose.material.icons.filled.CardGiftcard
-import androidx.compose.material.icons.filled.CarRental
-import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.Checkroom
-import androidx.compose.material.icons.filled.Commute
-import androidx.compose.material.icons.filled.Flight
-import androidx.compose.material.icons.filled.Handyman
-import androidx.compose.material.icons.filled.HealthAndSafety
-import androidx.compose.material.icons.filled.LocalDining
-import androidx.compose.material.icons.filled.LocalGasStation
-import androidx.compose.material.icons.filled.LocalHospital
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Receipt
-import androidx.compose.material.icons.filled.School
-import androidx.compose.material.icons.filled.SelfImprovement
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material.icons.filled.Subscriptions
-import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.data.model.CategoryConstants
-import com.example.data.model.HouseholdMember
-import com.example.data.model.MemberColorPalette
-import com.example.data.model.MemberProfile
-import com.example.data.model.parseHexColor
-import com.example.ui.theme.JointPurple
-import com.example.ui.theme.OceanTeal
-import com.example.ui.theme.OceanTealLight
+import com.example.data.model.AccountEntity
+import com.example.data.model.FinancialGoalEntity
+import com.example.data.model.RecurringTransactionEntity
+import com.example.data.model.TransactionEntity
+import com.example.ui.theme.*
+import com.example.util.CurrencyFormatter
+import java.text.SimpleDateFormat
+import java.util.*
 
 @Composable
-fun MemberBadge(
-    memberId: String,
+fun MetricCard(
+    title: String,
+    value: String,
+    subtitle: String? = null,
+    icon: ImageVector,
+    iconTint: Color,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant,
     modifier: Modifier = Modifier,
-    size: Int = 24
+    onClick: (() -> Unit)? = null
 ) {
-    val clean = memberId.trim().uppercase()
-    val (color, displayName, initial) = when (clean) {
-        "JOINT" -> Triple(JointPurple, "Joint", "J")
-        else -> {
-            val hash = Math.abs(clean.hashCode()) % MemberColorPalette.size
-            val c = parseHexColor(MemberColorPalette[hash].first, OceanTeal)
-            Triple(c, memberId.replaceFirstChar { it.uppercase() }, memberId.take(1).uppercase())
-        }
-    }
-
-    Row(
+    Card(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(color.copy(alpha = 0.15f))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
-        Box(
-            modifier = Modifier
-                .size(maxOf(14.dp, (size - 10).dp))
-                .clip(CircleShape)
-                .background(color),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = initial,
-                color = Color.White,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        Text(
-            text = displayName,
-            color = color,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-@Composable
-fun CategoryIconBadge(
-    category: String,
-    modifier: Modifier = Modifier,
-    size: androidx.compose.ui.unit.Dp = 40.dp
-) {
-    val icon = getCategoryIcon(category)
-    val color = getCategoryColor(category)
-
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(RoundedCornerShape(12.dp))
-            .background(color.copy(alpha = 0.15f)),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = category,
-            tint = color,
-            modifier = Modifier.size(size * 0.55f)
-        )
-    }
-}
-
-@Composable
-fun CategoryIconBadge(
-    categoryName: String,
-    modifier: Modifier = Modifier,
-    size: Int = 40
-) = CategoryIconBadge(category = categoryName, modifier = modifier, size = size.dp)
-
-@Composable
-fun MonthSelectorHeader(
-    displayMonth: String,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        Column(
+            modifier = Modifier.padding(16.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                IconButton(
-                    onClick = onPrevious,
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Box(
                     modifier = Modifier
                         .size(32.dp)
-                        .testTag("btn_prev_month")
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(iconTint.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Previous Month",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CalendarMonth,
+                        imageVector = icon,
                         contentDescription = null,
-                        modifier = Modifier.size(15.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = displayMonth,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        tint = iconTint,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
-
-                IconButton(
-                    onClick = onNext,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .testTag("btn_next_month")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Next Month",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (subtitle != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
 }
 
-fun getCategoryIcon(category: String): ImageVector {
-    return when (category.lowercase()) {
-        "food & dining", "dining", "restaurants", "swiggy", "zomato" -> Icons.Default.LocalDining
-        "groceries", "supermarket", "blinkit", "zepto" -> Icons.Default.ShoppingCart
-        "shopping", "clothing", "myntra", "amazon" -> Icons.Default.Checkroom
-        "fuel & travel", "fuel", "petrol", "uber", "ola" -> Icons.Default.LocalGasStation
-        "travel & holidays", "flights", "hotels" -> Icons.Default.Flight
-        "entertainment", "movies", "netflix", "spotify" -> Icons.Default.Movie
-        "utilities & bills", "electricity", "broadband", "mobile" -> Icons.Default.Receipt
-        "medical & healthcare", "pharmacy", "doctor" -> Icons.Default.LocalHospital
-        "personal care", "salon", "grooming" -> Icons.Default.SelfImprovement
-        "fitness & gym", "cult" -> Icons.AutoMirrored.Filled.DirectionsRun
-        "insurance & lic", "lic", "car insurance", "health insurance" -> Icons.Default.Shield
-        "emi & loans", "home loan", "car loan" -> Icons.Default.CarRental
-        "investments & sip", "sip", "mutual funds", "zerodha" -> Icons.Default.TrendingUp
-        "subscriptions" -> Icons.Default.Subscriptions
-        "home maintenance", "maid", "cook" -> Icons.Default.Handyman
-        "education", "courses" -> Icons.Default.School
-        "gifts & donations" -> Icons.Default.CardGiftcard
-        "car commute" -> Icons.Default.Commute
-        else -> Icons.Default.Category
-    }
-}
-
-fun getCategoryColor(category: String): Color {
-    return when (category.lowercase()) {
-        "food & dining" -> Color(0xFFF97316)
-        "groceries" -> Color(0xFF10B981)
-        "shopping" -> Color(0xFFEC4899)
-        "fuel & travel" -> Color(0xFFEAB308)
-        "travel & holidays" -> Color(0xFF06B6D4)
-        "entertainment" -> Color(0xFF8B5CF6)
-        "utilities & bills" -> Color(0xFF64748B)
-        "medical & healthcare" -> Color(0xFFEF4444)
-        "personal care" -> Color(0xFFD946EF)
-        "fitness & gym" -> Color(0xFF14B8A6)
-        "insurance & lic" -> Color(0xFF3B82F6)
-        "emi & loans" -> Color(0xFF6366F1)
-        "investments & sip" -> Color(0xFF059669)
-        "subscriptions" -> Color(0xFFA855F7)
-        "home maintenance" -> Color(0xFF78716C)
-        else -> Color(0xFF6B7280)
-    }
-}
-
-/**
- * Generalized Member Filter Row supporting 1, 2, 3, 4+ household members and Joint
- */
 @Composable
-fun MemberFilterRow(
-    members: List<MemberProfile> = emptyList(),
-    selectedMemberName: String? = null,
-    onMemberNameSelected: (String?) -> Unit,
+fun TransactionRow(
+    transaction: TransactionEntity,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val displayMembers = remember(members) {
-        members
+    val isExpense = transaction.type == "EXPENSE"
+    val isIncome = transaction.type == "INCOME"
+
+    val icon = when (transaction.category) {
+        "Housing & Mortgage" -> Icons.Default.Home
+        "Groceries & Food" -> Icons.Default.ShoppingCart
+        "Dining Out" -> Icons.Default.Restaurant
+        "Utilities & Internet" -> Icons.Default.Wifi
+        "Transportation" -> Icons.Default.DirectionsCar
+        "Entertainment" -> Icons.Default.Movie
+        "Salary" -> Icons.Default.Payments
+        else -> if (isIncome) Icons.Default.ArrowDownward else Icons.Default.CreditCard
+    }
+
+    val iconTint = if (isIncome) IncomeGreen else ExpenseRed
+
+    val dateStr = remember(transaction.timestamp) {
+        SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(transaction.timestamp))
     }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        FilterChip(
-            selected = selectedMemberName == null,
-            onClick = { onMemberNameSelected(null) },
-            label = { Text("All Household") },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-            },
-            colors = FilterChipDefaults.filterChipColors(
-                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-            ),
-            modifier = Modifier.testTag("filter_all_household")
-        )
-
-        displayMembers.forEach { member ->
-            val isSelected = selectedMemberName.equals(member.displayName, ignoreCase = true) ||
-                             selectedMemberName.equals(member.id, ignoreCase = true)
-            FilterChip(
-                selected = isSelected,
-                onClick = { onMemberNameSelected(member.displayName) },
-                label = { Text(member.displayName) },
-                leadingIcon = {
-                    UserAvatar(
-                        name = member.displayName,
-                        photoUrl = member.photoUrl,
-                        size = 18.dp,
-                        backgroundColor = member.color,
-                        fontSize = 9.sp
-                    )
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = member.color.copy(alpha = 0.2f),
-                    selectedLabelColor = member.color
-                ),
-                modifier = Modifier.testTag("filter_${member.displayName.lowercase()}")
-            )
-        }
-    }
-}
-
-/**
- * Universal UserAvatar component supporting Gmail / Google profile image
- * with automatic fallback to high-contrast initial badge
- */
-@Composable
-fun UserAvatar(
-    name: String,
-    photoUrl: String? = null,
-    modifier: Modifier = Modifier,
-    size: Dp = 40.dp,
-    backgroundColor: Color = MaterialTheme.colorScheme.primary,
-    fontSize: TextUnit = 16.sp
-) {
-    Surface(
-        shape = CircleShape,
-        color = backgroundColor,
-        modifier = modifier.size(size)
-    ) {
-        if (!photoUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = photoUrl,
-                contentDescription = name,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape),
-                contentScale = ContentScale.Crop
-            )
-        } else {
-            Box(contentAlignment = Alignment.Center) {
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(iconTint.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
                 Text(
-                    text = name.trim().take(1).uppercase().ifBlank { "C" },
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = fontSize
+                    text = if (transaction.merchant.isNotEmpty()) transaction.merchant else transaction.category,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Text(
+                    text = "${transaction.category} • $dateStr",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.End) {
+            val prefix = if (isExpense) "-" else if (isIncome) "+" else ""
+            Text(
+                text = "$prefix${CurrencyFormatter.format(transaction.amount)}",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = if (isIncome) IncomeGreen else MaterialTheme.colorScheme.onSurface
+            )
+            if (transaction.isRecurring) {
+                Text(
+                    text = "Recurring",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = UpcomingOrange
                 )
             }
         }
     }
 }
 
-// Backward-compatible overload for HouseholdMember
 @Composable
-fun MemberFilterRow(
-    selectedMember: HouseholdMember?,
-    onMemberSelected: (HouseholdMember?) -> Unit,
+fun AccountCard(
+    account: AccountEntity,
+    isRevealed: Boolean,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    MemberFilterRow(
-        members = emptyList(),
-        selectedMemberName = selectedMember?.name,
-        onMemberNameSelected = { name ->
-            onMemberSelected(if (name == null) null else HouseholdMember.fromId(name))
-        },
+    Card(
         modifier = modifier
-    )
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                val icon = when (account.type) {
+                    "CHECKING" -> Icons.Default.AccountBalance
+                    "SAVINGS" -> Icons.Default.Savings
+                    "CREDIT_CARD" -> Icons.Default.CreditCard
+                    "INVESTMENT" -> Icons.Default.TrendingUp
+                    else -> Icons.Default.Payments
+                }
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = account.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "${account.institution} ${if (account.lastFour.isNotEmpty()) "•••• " + account.lastFour else ""}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Column(horizontalAlignment = Alignment.End) {
+                val displayBalance = if (account.isSensitive && !isRevealed) {
+                    "••••••"
+                } else {
+                    CurrencyFormatter.format(account.balance)
+                }
+                Text(
+                    text = displayBalance,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (account.balance < 0) ExpenseRed else MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = account.type,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun GoalCard(
+    goal: FinancialGoalEntity,
+    onClick: () -> Unit,
+    onContribute: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val progress = if (goal.targetAmount > 0) {
+        (goal.currentAmount / goal.targetAmount).toFloat().coerceIn(0f, 1f)
+    } else 0f
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = goal.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${(progress * 100).toInt()}%",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surface
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "${CurrencyFormatter.format(goal.currentAmount)} of ${CurrencyFormatter.format(goal.targetAmount)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(
+                    onClick = onContribute,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("Add Funds", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RecurringCard(
+    rule: RecurringTransactionEntity,
+    onMarkPaid: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dateStr = remember(rule.nextDueDate) {
+        SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(rule.nextDueDate))
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = rule.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${rule.category} • Due $dateStr",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = CurrencyFormatter.format(rule.amount),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Button(
+                    onClick = onMarkPaid,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(30.dp)
+                ) {
+                    Text("Mark Paid", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
 }

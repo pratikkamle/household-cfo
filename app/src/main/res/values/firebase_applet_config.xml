@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="firestore_database_id" translatable="false">ai-studio-android-househol-47af3519-8b16-441e-a132-7bd9988ae0d6</string>
+    <string name="firestore_database_id">ai-studio-android-househol-47af3519-8b16-441e-a132-7bd9988ae0d6</string>
 </resources>

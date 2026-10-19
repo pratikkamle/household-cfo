@@ -1,6 +1,8 @@
 {
   "name": "Household CFO",
-  "description": "Shared family CFO & expense management app for Pratik and Manasvi with loans, investments, budgets, and automated insights.",
+  "description": "Comprehensive personal finance, household budget, account management, recurring payments, and intelligent CFO advisor app.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
