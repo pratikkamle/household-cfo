@@ -1,81 +1,92 @@
 # Household CFO
 
-Household CFO is a Kotlin-based Android finance management app designed for households to track spending, recurring bills, monthly budgets, accounts, and long-term goals with a shared family view. It combines local Room persistence with cloud sync and AI-assisted finance workflows, giving each household a single dashboard for planning and control.
+Household CFO is a Kotlin Android app for managing a household's finances from a single place. It combines budgeting, account tracking, recurring bills, reports, member-based planning, and cloud-backed household sync into a mobile-first personal finance dashboard.
+
+The app is designed around a shared family workflow: members can be added to a household, each person can track spending and income, and the household admin can manage security, budgets, and shared financial goals.
 
 ## Overview
 
-This app helps families and households:
+This project was built as a private household finance management app and currently includes:
 
-- Track income and expenses by member or household
-- Manage recurring commitments and scheduled payments
-- Set category-based budget plans
-- Review spending and available cash flow by month
-- Track account balances and linked financial accounts
-- Collaborate across household members with roles and permissions
-- Use AI-powered financial suggestions and smart parsing for transactions
-- Sync household data through Firebase-backed services
+- Multi-member household setup with roles and permissions
+- Monthly budgeting and category planning
+- Income and expense entry for each household member
+- Recurring commitment tracking and paid-status workflows
+- Account tracking for checking, savings, cash, and credit cards
+- Goal tracking and CFO-style financial review insights
+- Smart parsing for SMS / notification-based transaction capture
+- Firebase-backed authentication and household sync
+- Notification-driven reminders for credit-card bill due dates
 
-The project is built with Jetpack Compose and is structured around a single application module with Room-based data access, repository patterns, view models, and screen-level UI components.
+The current implementation is centered around Jetpack Compose UI, Room persistence, a repository layer, ViewModel state management, and Firebase for user authentication and data synchronization.
 
-## Key Features
+## Core features
 
-### Dashboard and monthly financial visibility
-- Monthly household summary with income, scheduled expenses, discretionary spend, and balance
-- Member-by-member spending breakdown
-- Budget and remaining discretionary calculations
-- Navigation across Dashboard, Scheduled Commitments, Budget, Reports, Accounts, and Transactions
+### Household membership and permissions
+- Household registration and admin creation flow
+- Invite-code based household join flow
+- Member management, role assignment, and active-user switching
+- Household-level security PIN and sensitive-data protection
+- Shared household identity and profile state across app sessions
 
-### Household management
-- Create a household and assign an admin
-- Invite users and manage member roles
-- Join households using invite codes
-- Maintain household-level security PIN and sensitive data visibility controls
+### Monthly financial dashboard
+- Monthly summary for income, scheduled commitments, discretionary spend, and available cash flow
+- Filter by month and by household member
+- Dashboard cards and analytics for spending patterns
+- Display of member-level spending breakdown and household budget utilization
 
-### Transaction tracking
-- Add income and expense entries
-- Categorize transactions by nature and payment method
-- Link transactions to accounts and members
-- Edit and delete existing entries
-- Support recurring transactions and mark them as paid
+### Transactions and recurring schedules
+- Add income and expense entries with merchant, category, payment method, notes, and account linkage
+- Expense classification into need / want / savings / investment categories
+- Recurring rules for monthly or scheduled commitments
+- Mark recurring items as paid and record them into the monthly ledger
+- Transaction editing and deletion flows
 
-### Budgeting and planning
-- Set monthly category budgets
-- View budget totals against household spending
-- Manage discretionary budget and category allocations
-- Adjust household budget plans from a dedicated dialog
+### Accounts and affordability tracking
+- Account management for checking, savings, cash, credit cards, and other account types
+- Sensitive account balance controls behind household PIN or device auth
+- Credit-card reminder logic to notify users about upcoming payment due dates
+- Account-linked financial planning and balance reconciliation
 
-### Financial goals and advisory insights
-- Create savings goals with target amounts and current progress
-- Track completion states and contributions
-- Simulate goal feasibility and expected timelines
-- Generate CFO-style insights using summary metrics and household data
+### Budgets and planning
+- Category-based budget plan creation and maintenance
+- Household discretionary budget tracking
+- Budget plan updates from the app UI
+- Budget import/repair logic to keep totals aligned with household budget totals
 
-### Smart parsing and AI support
-- Parse SMS/notification text into transaction suggestions
-- Auto-detect financial patterns from messages and receipts
-- Use Gemini / Firebase AI tooling for financial guidance and summaries
-- Smart detection workflow for fast expense/income capture
+### Goals, insights, and CFO review
+- Savings goal creation with target amount, timeline, and progress tracking
+- Goal contribution updates and completion toggling
+- CFO-style financial report generation based on monthly summary and goal trends
+- Goal feasibility and simulation logic for planning improvements
 
-### Cloud sync and account auth
-- Firebase integration for authentication and household sync
-- Google sign-in support
-- Household data publishing and restoration across devices
-- Realtime sync behavior for household records
+### Smart parsing and AI assistance
+- Smart detection for transaction text extracted from SMS or notification messages
+- Merchant/category inference based on spending patterns and transaction text
+- Gemini / Firebase AI integration for financial guidance and intelligent features
+- AI-assisted finance and household insight workflows
 
-## Tech Stack
+### Cloud sync and auth
+- Firebase Auth support with Google sign-in and credential-based authentication
+- Firestore / Firebase-backed household sync and restore flow
+- Realtime sync setup and app state restoration after reinstall or sign-in
+- Shared household publication and cloud recovery for local-first app usage
+
+## Tech stack
 
 - Kotlin
 - Android Jetpack Compose
-- Android Architecture Components
+- Material 3 UI components
 - Room Database
-- Coroutines and Flow
+- AndroidX lifecycle and ViewModel architecture
+- Kotlin Coroutines and Flow
 - Firebase Authentication
 - Firebase Firestore / Firebase services
-- Google AI / Gemini API integration
+- Firebase AI / Gemini API support
+- Secrets Gradle plugin for environment configuration
 - Gradle Kotlin DSL
-- Material 3 design system
 
-## Project Structure
+## Repo structure
 
 ```text
 household-cfo/
@@ -102,180 +113,202 @@ household-cfo/
 │   │   ├── androidTest/
 │   │   └── test/
 │   ├── build.gradle.kts
-│   └── proguard-rules.pro
+│   ├── proguard-rules.pro
+│   └── .gitignore
 ├── build.gradle.kts
 ├── gradle.properties
 ├── gradle/
 ├── settings.gradle.kts
 ├── .env.example
 ├── firebase.json
-├── firestore.rules
 ├── firebase-blueprint.json
+├── firestore.rules
+├── README.md
 ├── metadata.json
 ├── .gitignore
-├── README.md
-└── gradlew / gradlew.bat
+├── gradlew
+├── gradlew.bat
+└── LICENSE (if added later)
 ```
 
-## Core Architecture
+## Architecture summary
 
-The application follows a layered architecture:
+The app follows a clean layered design:
 
-- UI layer: Compose screens and reusable components
-- ViewModel layer: state management, app flows, and actions
-- Repository layer: access to local database and sync orchestration
-- Data layer: Room DAOs, entities, and data model objects
-- Service layer: notification capture and background financial processing
-- Sync layer: cloud synchronization logic with Firebase-backed household state
+- UI layer: Compose screens and reusable components in `app/src/main/java/com/example/ui`
+- ViewModel layer: state management and app flows in `FinanceViewModel`
+- Repository layer: local database and sync logic in `FinanceRepository`
+- Data layer: Room DAOs and entities in `com.example.data.local` and `com.example.data.model`
+- Service layer: notification and transaction-capture utilities in `com.example.service`
+- Sync layer: Firebase and household sync logic in `com.example.data.sync`
 
-### Main application flow
+Key implementation files:
 
-- `MainActivity` hosts the app shell and branches between authentication and the app dashboard
-- `FinanceViewModel` owns most state, including household, users, transactions, budgets, goals, and UI actions
-- `FinanceRepository` exposes database operations and reconciliation helpers
-- `AppDatabase` is the local persistence layer using Room
-- `CloudSyncManager` manages cloud state and real-time household sync
+- `MainActivity.kt` — app entry point and screen switching shell
+- `HouseholdCfoApp.kt` — app-level Firebase initialization
+- `FinanceViewModel.kt` — main state holder for month summaries, transactions, members, budgets, goals, sync, and actions
+- `FinanceRepository.kt` — repository APIs for transactions, households, users, budgets, goals, and account updates
+- `CloudSyncManager.kt` — cloud sync logic for user/household data
+- `SmartTransactionParser.kt` — parses text-based transaction inputs into structured entries
+- `CreditCardBillReminderHelper.kt` — sends bill-due reminders based on card schedules
 
-## Setup and Installation
+## Setup and configuration
 
 ### Prerequisites
 
 - Android Studio Hedgehog or newer
-- JDK 11+
+- JDK 11 or newer
 - Android SDK with API 36 support
-- A Firebase project (for Auth / Firestore / sync features)
-- Optional: Gemini API key for AI features
+- Firebase project configured for Android
+- Optional Gemini / Firebase AI API key for AI-powered features
 
-### 1. Clone the repository
+### 1. Clone the project
 
 ```bash
 git clone https://github.com/pratikkamle/household-cfo.git
 cd household-cfo
 ```
 
-### 2. Configure environment values
+### 2. Configure local environment values
 
-Copy the sample environment file:
+The project uses the Secrets Gradle plugin and reads from `.env` by default.
 
 ```bash
 cp .env.example .env
 ```
 
-Then update the values as needed. The sample includes:
+Example values:
 
 ```dotenv
-GEMINI_API_KEY=MY_GEMINI_API_KEY
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 ```
 
-Note: this app is configured to use the Secrets Gradle Plugin and expects `.env` values at build time.
+If you are not using Gemini in a local build, you can leave the key blank or provide a placeholder for the build to remain valid.
 
 ### 3. Configure Firebase
 
-This app uses Firebase for authentication and sync features. You will need to:
+This app expects a Firebase project to be configured:
 
-- Create a Firebase project
-- Add the Android app package matching the configured applicationId
+- Add your Android app package based on the app ID in `app/build.gradle.kts`
 - Download `google-services.json` and place it in the `app/` directory
-- Enable the services required by the app (Auth, Firestore, App Check if configured)
+- Enable the required Firebase products for the app (Auth, Firestore, App Check if configured)
 
-The project is already configured to use Google services with the plugin, but the actual Firebase credentials must exist in your local environment or project setup.
+The project is already set up to use the Google Services plugin and Firebase dependencies, but the actual project credentials must be added in your local environment or Firebase setup.
 
 ### 4. Open in Android Studio
 
-- Open the project in Android Studio
-- Let Gradle sync complete
-- Accept any SDK license prompts if required
+- Open the repository in Android Studio
+- Let Gradle sync finish
+- Make sure the Android SDK is installed and available
 - Build the project
 
 ### 5. Run the app
 
 From Android Studio:
 
-- Select an emulator or connected device
-- Click Run
+- Select an emulator or a connected Android device
+- Press Run
 
-Or from command line:
+Or from the command line:
 
 ```bash
 ./gradlew assembleDebug
 ```
 
-## Running Tests
+## Tests
 
-The project contains basic unit tests and Robolectric-based test scaffolding:
+The project already contains basic unit and Robolectric-based tests.
+
+Run:
 
 ```bash
 ./gradlew test
 ```
 
-Optional instrumentation tests can also be run through Android Studio or Gradle.
+For instrumentation tests:
 
-## Usage Highlights
+```bash
+./gradlew connectedDebugAndroidTest
+```
 
-### Create a Household
+## Typical usage
+
+### Create a household
 - Register a household admin
-- Set a household name and discretionary budget
-- Choose a security PIN
-- Invite family members or join using an invite code
+- Set the household name and discretionary budget
+- Configure a security PIN
+- Add family members or join via invite code
 
-### Track Spending
-- Record expenses for a specific member
-- Assign category, account, payment method, and merchant details
-- Use smart detection for SMS or notification parsing
+### Add transactions
+- Record income and expenses from the dashboard
+- Set category, account, payment method, merchant, and notes
+- Mark whether an expense is discretionary, a recurring commitment, or an investment
 
-### Review the Month
-- View totals for income and discretionary spend
-- Inspect budget balances and spending breakdowns by member
-- Monitor recurring commitments and upcoming bills
+### Manage budgets
+- Assign category budgets
+- Review monthly budget progress vs. actual spending
+- Adjust budget plans from the household budget UI
 
-### Manage Household Goals
-- Add a savings goal
-- Set a target, current savings, and duration
-- Monitor progress and feasibility recommendations
+### Review reports
+- Use the dashboard summary and reports screen to see spending trends
+- Check cash flow, savings rate, and household financial health
+- Track goals and understanding of upcoming obligations
 
-## Data Model Summary
+### Use smart parsing
+- Parse text from SMS or app notifications into a suggested transaction
+- Confirm or reject suggested entries before saving
 
-The app stores household finance data using Room entities such as:
+### Stay on top of bills
+- Use credit card reminder logic to warn about approaching due dates
+
+## Data model highlights
+
+The app uses Room entities such as:
 
 - `HouseholdEntity`
 - `UserEntity`
 - `TransactionEntity`
-- `RecurringRuleEntity`
+- `RecurringTransactionEntity`
 - `AccountEntity`
 - `CategoryBudgetEntity`
 - `FinancialGoalEntity`
 
-These model classes live under `app/src/main/java/com/example/data/model` and are used by the repository and ViewModel layers for calculation and UI rendering.
+These entity models are defined in the `app/src/main/java/com/example/data/model` package and are used by the repository and UI layers.
 
-## Security Notes
+## Security and privacy notes
 
-This application contains personal finance data and includes:
+This is a household financial app and includes sensitive account and spending data. The current implementation includes:
 
-- Household-level PIN protection
-- Sensitive balance visibility controls
-- Local storage and sync of financial records
-- Authentication flows for user identity management
+- Household-level security PIN
+- Sensitive data masking behind auth flows
+- Local Room storage plus cloud sync
+- Authentication for user identity and household membership
 
-Use proper Firebase security rules and local device protections if you deploy this beyond local development.
+For production deployment, review:
 
-## Known Project Characteristics
+- Firebase security rules
+- App Check configuration
+- Notification permission handling
+- Proper Android release signing and keystore management
 
-This repository appears to be a private, app-focused household finance dashboard with Android UI and local-first data persistence. The project is currently designed around a single household concept with a small multi-member structure and a premium finance dashboard style.
+## Current project status
 
-## Roadmap Ideas
+This repository is a functional Android app prototype / development project with a substantial feature set for household budget tracking, planning, and reporting. It is organized around a mobile-first, local-first architecture but includes cloud sync and AI-assisted features to support a richer household finance workflow.
 
-Possible future improvements include:
+## Future improvements
 
-- Better export/report sharing features
-- More advanced AI-generated spending insights
-- Multi-household switching and better tenant setup
-- Cloud backup restoration UX cleanup
-- Improved test suite coverage
-- Stronger security policies and release signing automation
+Possible enhancements include:
+
+- Better CSV / export and reporting sharing features
+- More advanced AI-generated spending analysis
+- Improved cross-household switching and user management
+- Additional finance learning tools for debt reduction and savings optimization
+- Stronger release automation and CI checks
+- Broader test coverage for the ViewModel and sync flows
 
 ## License
 
-This repository does not currently declare a license in the project metadata provided. If this project is intended for public distribution, consider adding an appropriate open-source license such as MIT or Apache 2.0.
+No explicit project license was found in the repository metadata at the time of review. If this project is intended to be publicly reusable or distributable, consider adding an open-source license such as MIT or Apache 2.0.
 
 ## Contributing
 
@@ -284,18 +317,12 @@ If you want to contribute:
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Run the relevant tests
-5. Open a pull request with a clear description of the feature or fix
+4. Run tests and validate your build
+5. Open a pull request with a clear summary of the improvement
 
-## Contact / Maintainer
+## Contact
 
 Repository owner: `pratikkamle`
-Project name: `household-cfo`
+Project: `household-cfo`
 
-## Final Note
-
-Household CFO is designed as a family-first personal finance tracker with built-in budgeting, AI assistance, and household coordination. The application aims to blend pragmatic budgeting tools with a modern mobile UX and cloud-ready architecture for shared household decision-making.
-
----
-
-This README is intended to serve as a practical project overview for onboarding, local setup, and feature understanding for future contributors and users.
+This README reflects the current repository structure and the features implemented in the app as of the latest repository state.
