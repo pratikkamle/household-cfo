@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to restore the entire Household CFO codebase back to commit ecc53cab9df32da97c786dc10566c013ee560d8d, preserving the original feature set, in-app Household Security PIN flows, UI architecture, and verifying clean compilation.",
+  "updatedAt":  "2026-10-26T16:34:22.430372961Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

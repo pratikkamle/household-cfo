@@ -1,12 +1,9 @@
 package com.example.ui.screens
 
 import android.app.Activity
-import android.app.KeyguardManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -36,7 +33,6 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Security
@@ -109,7 +105,7 @@ fun HouseholdHubDialog(
     onRemoveMember: (userId: Long) -> Unit = {},
     onUpdateHouseholdName: (newName: String) -> Unit,
     onShareInvite: (Context) -> Unit,
-    onJoinHousehold: (inviteCode: String, memberName: String, memberEmail: String, onResult: (Boolean, String) -> Unit) -> Unit = { _, _, _, _ -> },
+    onJoinHousehold: (inviteCode: String, memberName: String, onResult: (Boolean, String) -> Unit) -> Unit,
     onOpenEditBudgetPlan: () -> Unit,
     onSignInWithGoogle: (Activity) -> Unit,
     onSignOut: () -> Unit = {},
@@ -138,51 +134,12 @@ fun HouseholdHubDialog(
     var editedHouseholdName by remember { mutableStateOf(currentHouseholdName) }
 
     var memberPendingAdminPromotion by remember { mutableStateOf<MemberProfile?>(null) }
+    var adminPinInput by remember { mutableStateOf("") }
+    var adminPinError by remember { mutableStateOf<String?>(null) }
+
     var userPendingAdminSwitch by remember { mutableStateOf<UserEntity?>(null) }
-    var pendingActionOnAuth by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var deviceAuthErrorMessage by remember { mutableStateOf<String?>(null) }
-
-    val keyguardManager = remember {
-        context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-    }
-    val isDeviceSecure = remember(keyguardManager) {
-        try {
-            keyguardManager?.isDeviceSecure == true
-        } catch (t: Throwable) {
-            false
-        }
-    }
-
-    val deviceAuthLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val action = pendingActionOnAuth
-            pendingActionOnAuth = null
-            deviceAuthErrorMessage = null
-            action?.invoke()
-        } else {
-            deviceAuthErrorMessage = "Device verification was cancelled or failed."
-        }
-    }
-
-    fun launchDeviceAuth(title: String, subtitle: String, onVerified: () -> Unit) {
-        deviceAuthErrorMessage = null
-        if (keyguardManager != null && isDeviceSecure) {
-            try {
-                val intent = keyguardManager.createConfirmDeviceCredentialIntent(title, subtitle)
-                if (intent != null) {
-                    pendingActionOnAuth = onVerified
-                    deviceAuthLauncher.launch(intent)
-                    return
-                }
-            } catch (t: Throwable) {
-                deviceAuthErrorMessage = "Device verification unavailable: ${t.message}"
-            }
-        }
-        // Fallback for devices without screen lock: proceed with direct confirmation
-        onVerified()
-    }
+    var switchAdminPinInput by remember { mutableStateOf("") }
+    var switchAdminPinError by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -321,7 +278,8 @@ fun HouseholdHubDialog(
                                             onClick = {
                                                 if (u.role.equals("ADMIN", ignoreCase = true) && activeUser?.id != u.id) {
                                                     userPendingAdminSwitch = u
-                                                    deviceAuthErrorMessage = null
+                                                    switchAdminPinInput = ""
+                                                    switchAdminPinError = null
                                                 } else {
                                                     onSelectActiveUser(u)
                                                 }
@@ -350,7 +308,7 @@ fun HouseholdHubDialog(
 
                             Text(
                                 text = if (currentUserRole == UserRole.ADMIN) 
-                                    "You are logged in as Admin. Role management and administrative changes are protected by device lock (Biometric / Screen Lock)."
+                                    "You are logged in as Admin. Role management and administrative changes require Security PIN."
                                 else
                                     "You are logged in as ${currentUserRole.displayName}. Administrative settings are read-only.",
                                 fontSize = 11.sp,
@@ -791,10 +749,11 @@ fun HouseholdHubDialog(
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("🔒 Promote to Admin (Device Security)") },
+                                            text = { Text("🔒 Promote to Admin (Requires PIN)") },
                                             onClick = {
                                                 memberPendingAdminPromotion = member
-                                                deviceAuthErrorMessage = null
+                                                adminPinInput = ""
+                                                adminPinError = null
                                                 showRoleMenu = false
                                             }
                                         )
@@ -907,7 +866,7 @@ fun HouseholdHubDialog(
                             Button(
                                 onClick = {
                                     joinLoading = true
-                                    onJoinHousehold(joinInviteCode, joinMemberName, currentUser?.email ?: "") { success, msg ->
+                                    onJoinHousehold(joinInviteCode, joinMemberName) { success, msg ->
                                         joinLoading = false
                                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                         if (success) isJoiningHousehold = false
@@ -926,13 +885,14 @@ fun HouseholdHubDialog(
         }
     }
 
-    // Admin Promotion Device Security Authorization Dialog
+    // Admin Promotion PIN Authorization Dialog
     if (memberPendingAdminPromotion != null) {
         val target = memberPendingAdminPromotion!!
         AlertDialog(
             onDismissRequest = {
                 memberPendingAdminPromotion = null
-                deviceAuthErrorMessage = null
+                adminPinInput = ""
+                adminPinError = null
             },
             title = {
                 Row(
@@ -940,7 +900,7 @@ fun HouseholdHubDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        imageVector = if (isDeviceSecure) Icons.Default.Fingerprint else Icons.Default.Security,
+                        imageVector = Icons.Default.Security,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
@@ -951,54 +911,60 @@ fun HouseholdHubDialog(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "Promoting '${target.displayName}' to Admin grants full control over household members, financial data, and security rules.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = if (isDeviceSecure) {
-                            "To authorize this promotion, confirm using your device screen lock (Device PIN, Password, Pattern) or Fingerprint."
-                        } else {
-                            "Confirm promoting ${target.displayName} to Admin. (Tip: Enable a device screen lock in phone Settings for banking-grade security)."
-                        },
+                        text = "Enter the 4-digit Household Security PIN to authorize this change:",
                         fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    deviceAuthErrorMessage?.let { err ->
-                        Text(text = err, color = ExpenseRed, fontSize = 12.sp)
-                    }
+                    OutlinedTextField(
+                        value = adminPinInput,
+                        onValueChange = {
+                            if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
+                                adminPinInput = it
+                                adminPinError = null
+                            }
+                        },
+                        label = { Text("Admin PIN") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                        isError = adminPinError != null,
+                        supportingText = adminPinError?.let { { Text(it, color = ExpenseRed) } },
+                        modifier = Modifier.fillMaxWidth().testTag("admin_promotion_pin_input")
+                    )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        launchDeviceAuth(
-                            title = "Authorize Admin Promotion",
-                            subtitle = "Verify device lock or biometric to promote ${target.displayName} to Admin"
-                        ) {
+                        val expectedPin = household?.securityPin?.ifBlank { "1234" } ?: "1234"
+                        if (adminPinInput == expectedPin) {
                             onUpdateMemberRole(target.userId, "ADMIN")
                             Toast.makeText(context, "${target.displayName} promoted to Admin!", Toast.LENGTH_SHORT).show()
                             memberPendingAdminPromotion = null
+                            adminPinInput = ""
+                            adminPinError = null
+                        } else {
+                            adminPinError = "Incorrect Security PIN. Admin promotion denied."
                         }
                     },
                     modifier = Modifier.testTag("confirm_admin_promotion_btn")
                 ) {
-                    Icon(
-                        if (isDeviceSecure) Icons.Default.Fingerprint else Icons.Default.Security,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (isDeviceSecure) "Verify with Device Security" else "Authorize Admin")
+                    Text("Authorize Admin")
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
                         memberPendingAdminPromotion = null
-                        deviceAuthErrorMessage = null
+                        adminPinInput = ""
+                        adminPinError = null
                     }
                 ) {
                     Text("Cancel")
@@ -1007,13 +973,14 @@ fun HouseholdHubDialog(
         )
     }
 
-    // Admin Persona Switch Device Security Authorization Dialog
+    // Admin Persona Switch PIN Authorization Dialog
     if (userPendingAdminSwitch != null) {
         val target = userPendingAdminSwitch!!
         AlertDialog(
             onDismissRequest = {
                 userPendingAdminSwitch = null
-                deviceAuthErrorMessage = null
+                switchAdminPinInput = ""
+                switchAdminPinError = null
             },
             title = {
                 Row(
@@ -1021,65 +988,71 @@ fun HouseholdHubDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        imageVector = if (isDeviceSecure) Icons.Default.Fingerprint else Icons.Default.Security,
+                        imageVector = Icons.Default.Security,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Verify Admin Identity",
+                        text = "Admin Access Authorization",
                         fontWeight = FontWeight.Bold
                     )
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "Switching to '${target.name}' grants Administrator authority over household finances, accounts, and member roles.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = if (isDeviceSecure) {
-                            "Confirm using your phone's screen lock (Device PIN, Password, Pattern) or Fingerprint/Face unlock."
-                        } else {
-                            "Confirm switching to ${target.name} (Admin)."
-                        },
+                        text = "Enter the 4-digit Household Security PIN to switch to Admin:",
                         fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    deviceAuthErrorMessage?.let { err ->
-                        Text(text = err, color = ExpenseRed, fontSize = 12.sp)
-                    }
+                    OutlinedTextField(
+                        value = switchAdminPinInput,
+                        onValueChange = {
+                            if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
+                                switchAdminPinInput = it
+                                switchAdminPinError = null
+                            }
+                        },
+                        label = { Text("Household Security PIN") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                        isError = switchAdminPinError != null,
+                        supportingText = switchAdminPinError?.let { { Text(it, color = ExpenseRed) } },
+                        modifier = Modifier.fillMaxWidth().testTag("admin_switch_pin_input")
+                    )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        launchDeviceAuth(
-                            title = "Verify Admin Identity",
-                            subtitle = "Verify device lock or biometric to switch to ${target.name} (Admin)"
-                        ) {
+                        val expectedPin = household?.securityPin?.ifBlank { "1234" } ?: "1234"
+                        if (switchAdminPinInput == expectedPin) {
                             onSelectActiveUser(target)
                             Toast.makeText(context, "Switched to ${target.name} (Admin)", Toast.LENGTH_SHORT).show()
                             userPendingAdminSwitch = null
+                            switchAdminPinInput = ""
+                            switchAdminPinError = null
+                        } else {
+                            switchAdminPinError = "Incorrect Security PIN. Admin access denied."
                         }
                     },
                     modifier = Modifier.testTag("confirm_admin_switch_btn")
                 ) {
-                    Icon(
-                        if (isDeviceSecure) Icons.Default.Fingerprint else Icons.Default.Security,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (isDeviceSecure) "Verify with Device Security" else "Confirm & Switch")
+                    Text("Verify & Switch")
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
                         userPendingAdminSwitch = null
-                        deviceAuthErrorMessage = null
+                        switchAdminPinInput = ""
+                        switchAdminPinError = null
                     }
                 ) {
                     Text("Cancel")
