@@ -1,155 +1,232 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.LocalAtm
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Savings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.AccountEntity
-import com.example.ui.components.SensitiveText
-import com.example.ui.theme.*
-import com.example.ui.viewmodel.FinanceViewModel
-import com.example.util.CreditCardBillReminderHelper
+import com.example.data.model.MemberProfile
+import com.example.data.model.UserRole
+import com.example.ui.components.MemberBadge
+import com.example.ui.theme.Emerald500
+import com.example.ui.theme.ExpenseRed
 import com.example.util.CurrencyFormatter
 
 @Composable
 fun AccountsScreen(
-    viewModel: FinanceViewModel,
-    onOpenAddAccount: () -> Unit,
+    accounts: List<AccountEntity>,
+    currentUserRole: UserRole = UserRole.ADMIN,
+    isSensitiveRevealed: Boolean = false,
+    members: List<MemberProfile> = emptyList(),
+    onToggleSensitivity: () -> Unit = {},
+    onAddAccount: (
+        name: String,
+        holder: String,
+        accountType: String,
+        balance: Double,
+        accountNumberMask: String,
+        institution: String,
+        notes: String,
+        creditLimit: Double,
+        userId: Long?
+    ) -> Unit,
+    onUpdateAccount: (AccountEntity) -> Unit,
+    onDeleteAccount: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val accounts by viewModel.accounts.collectAsState()
-    val isRevealed by viewModel.isSensitiveRevealed.collectAsState()
-    val activeRole by viewModel.activeUserRole.collectAsState()
+    var isAddDialogOpen by remember { mutableStateOf(false) }
+    var editingAccount by remember { mutableStateOf<AccountEntity?>(null) }
 
-    var accountToDelete by remember { mutableStateOf<AccountEntity?>(null) }
-
-    val bankAccounts = remember(accounts) { accounts.filter { it.type == "BANK" || it.type == "SAVINGS" || it.type == "CHECKING" } }
-    val creditCards = remember(accounts) { accounts.filter { it.type == "CREDIT_CARD" } }
-    val cashWallets = remember(accounts) { accounts.filter { it.type == "CASH" || it.type == "WALLET" } }
-
-    val totalAssets = remember(accounts) {
-        accounts.filter { it.type != "CREDIT_CARD" }.sumOf { it.balance }
+    // Check Role Access: Only ADMIN and CONTRIBUTOR can view or manage Accounts
+    if (!currentUserRole.canViewAccounts) {
+        AccountsRestrictedView(currentUserRole = currentUserRole, modifier = modifier)
+        return
     }
-    val totalLiabilities = remember(accounts) {
-        accounts.filter { it.type == "CREDIT_CARD" }.sumOf { it.balance }
-    }
-    val netWorth = totalAssets - totalLiabilities
+
+    // Totals
+    val totalBankLiquidity = accounts.filter { it.accountType == "BANK" || it.accountType == "CASH" }.sumOf { it.balance }
+    val totalInvestments = accounts.filter {
+        it.accountType in listOf("INVESTMENT", "LIC_INSURANCE", "NPS", "EPF_PPF", "FIXED_DEPOSIT", "GOLD", "OTHER")
+    }.sumOf { it.balance }
+    val totalCreditDues = accounts.filter { it.accountType == "CREDIT_CARD" }.sumOf { -it.balance }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .testTag("accounts_screen"),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Header
+        // Header with Sensitivity Eye & Add Button
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Accounts & Cards",
-                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onBackground
+                        text = "Accounts & Assets",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Manage bank balances, credit limits & cash",
+                        text = "Bank accounts, cards, LIC, MFs & NPS schemes",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                if (activeRole.canManageHousehold) {
-                    FilledTonalButton(
-                        onClick = onOpenAddAccount,
-                        modifier = Modifier.testTag("add_account_button"),
-                        shape = RoundedCornerShape(12.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Sensitivity Eye Button
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isSensitiveRevealed) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.size(42.dp)
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        IconButton(
+                            onClick = onToggleSensitivity,
+                            modifier = Modifier.testTag("btn_toggle_sensitivity")
+                        ) {
+                            Icon(
+                                imageVector = if (isSensitiveRevealed) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (isSensitiveRevealed) "Hide Balances" else "Reveal Balances with Authentication",
+                                tint = if (isSensitiveRevealed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+
+                    // Add Button
+                    Button(
+                        onClick = { isAddDialogOpen = true },
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.testTag("btn_open_add_account")
+                    ) {
+                        Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add")
+                        Text("Add Asset", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
 
-        // Net Worth Card
+        // Summary Card
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ElevatedCard(
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Household Net Worth",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            text = "TOTAL LIQUID BALANCE",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        IconButton(onClick = { viewModel.toggleSensitivity() }) {
-                            Icon(
-                                imageVector = if (isRevealed) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = "Toggle privacy",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSensitiveRevealed) Emerald500.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = if (isSensitiveRevealed) "Unlocked" else "Protected • Tap 👁 to Reveal",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSensitiveRevealed) Emerald500 else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    SensitiveText(
-                        amount = netWorth,
-                        isRevealed = isRevealed,
-                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    Text(
+                        text = if (isSensitiveRevealed) CurrencyFormatter.formatInr(totalBankLiquidity) else "₹ ••••••••",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Emerald500
                     )
-
-                    Spacer(modifier = Modifier.height(16.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
-                            Text("Total Assets", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
-                            SensitiveText(
-                                amount = totalAssets,
-                                isRevealed = isRevealed,
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = IncomeGreen
+                            Text(text = "MFs, NPS & Schemes", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = if (isSensitiveRevealed) CurrencyFormatter.formatInr(totalInvestments) else "₹ ••••••••",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
                             )
                         }
-
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("Credit Card Debt", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
-                            SensitiveText(
-                                amount = totalLiabilities,
-                                isRevealed = isRevealed,
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        Column {
+                            Text(text = "Credit Card Dues", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = if (isSensitiveRevealed) CurrencyFormatter.formatInr(totalCreditDues) else "₹ ••••••••",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
                                 color = ExpenseRed
                             )
                         }
@@ -158,90 +235,153 @@ fun AccountsScreen(
             }
         }
 
-        // Bank Accounts Section
-        if (bankAccounts.isNotEmpty()) {
+        // Empty State if no accounts exist
+        if (accounts.isEmpty()) {
             item {
-                Text(
-                    text = "Bank Accounts",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccountBalance,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                        Text(
+                            text = "No Accounts or Assets Yet",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Start fresh with real data! Add your bank accounts, credit/debit cards, LIC policies, mutual funds, or NPS pension schemes.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Button(
+                            onClick = { isAddDialogOpen = true },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Add First Account / Asset")
+                        }
+                    }
+                }
+            }
+        } else {
+            // Group accounts by type
+            val bankAccounts = accounts.filter { it.accountType == "BANK" || it.accountType == "CASH" }
+            val cardAccounts = accounts.filter { it.accountType == "CREDIT_CARD" || it.accountType == "DEBIT_CARD" }
+            val schemeAccounts = accounts.filter {
+                it.accountType in listOf("INVESTMENT", "LIC_INSURANCE", "NPS", "EPF_PPF", "FIXED_DEPOSIT", "GOLD", "OTHER")
             }
 
-            items(bankAccounts, key = { it.id }) { acc ->
-                AccountItemCard(
-                    account = acc,
-                    isRevealed = isRevealed,
-                    canDelete = activeRole.canManageHousehold,
-                    onDelete = { accountToDelete = acc }
-                )
-            }
-        }
-
-        // Credit Cards Section
-        if (creditCards.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Credit Cards",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+            if (bankAccounts.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Bank & Liquid Accounts (${bankAccounts.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                items(bankAccounts, key = { it.id }) { acc ->
+                    AccountItemCard(
+                        account = acc,
+                        isSensitiveRevealed = isSensitiveRevealed,
+                        onClick = { editingAccount = acc }
+                    )
+                }
             }
 
-            items(creditCards, key = { it.id }) { card ->
-                CreditCardItemCard(
-                    account = card,
-                    isRevealed = isRevealed,
-                    canDelete = activeRole.canManageHousehold,
-                    onDelete = { accountToDelete = card }
-                )
-            }
-        }
-
-        // Cash & Wallets Section
-        if (cashWallets.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Cash & Wallets",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+            if (cardAccounts.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Credit & Debit Cards (${cardAccounts.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                items(cardAccounts, key = { it.id }) { acc ->
+                    AccountItemCard(
+                        account = acc,
+                        isSensitiveRevealed = isSensitiveRevealed,
+                        onClick = { editingAccount = acc }
+                    )
+                }
             }
 
-            items(cashWallets, key = { it.id }) { cash ->
-                AccountItemCard(
-                    account = cash,
-                    isRevealed = isRevealed,
-                    canDelete = activeRole.canManageHousehold,
-                    onDelete = { accountToDelete = cash }
-                )
+            if (schemeAccounts.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Investments, LIC, MFs & Schemes (${schemeAccounts.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                items(schemeAccounts, key = { it.id }) { acc ->
+                    AccountItemCard(
+                        account = acc,
+                        isSensitiveRevealed = isSensitiveRevealed,
+                        onClick = { editingAccount = acc }
+                    )
+                }
             }
         }
     }
 
-    // Delete Confirmation
-    if (accountToDelete != null) {
-        val acc = accountToDelete!!
-        AlertDialog(
-            onDismissRequest = { accountToDelete = null },
-            title = { Text("Delete Account?") },
-            text = { Text("Are you sure you want to remove '${acc.name}'?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteAccount(acc.id)
-                        accountToDelete = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = ExpenseRed)
-                ) {
-                    Text("Delete")
-                }
+    // Add Account Dialog
+    if (isAddDialogOpen) {
+        AddEditAccountDialog(
+            initialAccount = null,
+            members = members,
+            onSave = { _, name, holder, type, bal, mask, inst, notes, limit, uId ->
+                onAddAccount(name, holder, type, bal, mask, inst, notes, limit, uId)
             },
-            dismissButton = {
-                TextButton(onClick = { accountToDelete = null }) {
-                    Text("Cancel")
-                }
-            }
+            onDismiss = { isAddDialogOpen = false }
+        )
+    }
+
+    // Edit Account Dialog
+    editingAccount?.let { acc ->
+        AddEditAccountDialog(
+            initialAccount = acc,
+            members = members,
+            onSave = { id, name, holder, type, bal, mask, inst, notes, limit, uId ->
+                onUpdateAccount(
+                    acc.copy(
+                        name = name,
+                        holder = holder,
+                        accountType = type,
+                        balance = bal,
+                        accountNumberMask = mask,
+                        institution = inst,
+                        notes = notes,
+                        creditLimit = limit,
+                        userId = uId
+                    )
+                )
+            },
+            onDelete = { id -> onDeleteAccount(id) },
+            onDismiss = { editingAccount = null }
         )
     }
 }
@@ -249,89 +389,111 @@ fun AccountsScreen(
 @Composable
 fun AccountItemCard(
     account: AccountEntity,
-    isRevealed: Boolean,
-    canDelete: Boolean,
-    onDelete: () -> Unit
+    isSensitiveRevealed: Boolean,
+    onClick: () -> Unit
 ) {
+    val (icon, typeLabel) = when (account.accountType) {
+        "CREDIT_CARD" -> Pair(Icons.Default.CreditCard, "Credit Card")
+        "DEBIT_CARD" -> Pair(Icons.Default.CreditCard, "Debit Card")
+        "INVESTMENT" -> Pair(Icons.Default.TrendingUp, "Mutual Funds / Stocks")
+        "LIC_INSURANCE" -> Pair(Icons.Default.Shield, "LIC / Insurance")
+        "NPS" -> Pair(Icons.Default.Savings, "NPS / Pension")
+        "EPF_PPF" -> Pair(Icons.Default.Savings, "EPF / PPF")
+        "FIXED_DEPOSIT" -> Pair(Icons.Default.AccountBalance, "Fixed Deposit")
+        "GOLD" -> Pair(Icons.Default.Savings, "Gold / SGB")
+        "CASH" -> Pair(Icons.Default.LocalAtm, "Cash in Hand")
+        else -> Pair(Icons.Default.AccountBalance, "Bank Account")
+    }
+
     Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("account_card_${account.id}"),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            .clickable { onClick() }
+            .testTag("account_card_${account.id}")
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(PrimaryBlue.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f)
             ) {
-                Icon(
-                    imageVector = if (account.type == "CASH") Icons.Default.Money else Icons.Default.AccountBalance,
-                    contentDescription = null,
-                    tint = PrimaryBlue,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = account.name,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurface
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
                     )
-                    if (account.isPrimary) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = CircleShape,
-                            color = PrimaryBlue.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                text = "Primary",
-                                color = PrimaryBlue,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = account.name,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        MemberBadge(memberId = account.holder)
+                    }
+
+                    Text(
+                        text = buildString {
+                            if (account.institution.isNotBlank()) append("${account.institution} • ")
+                            append(typeLabel)
+                            if (account.accountNumberMask.isNotBlank()) {
+                                append(" • ")
+                                append(if (isSensitiveRevealed) account.accountNumberMask else "••••")
+                            }
+                        },
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (account.notes.isNotBlank()) {
+                        Text(
+                            text = account.notes,
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
-                Text(
-                    text = "${account.institution} • ${account.type}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             Column(horizontalAlignment = Alignment.End) {
-                SensitiveText(
-                    amount = account.balance,
-                    isRevealed = isRevealed,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface
+                Text(
+                    text = if (isSensitiveRevealed) {
+                        CurrencyFormatter.formatInr(account.balance)
+                    } else {
+                        "₹ ••••••••"
+                    },
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = if (account.balance < 0) ExpenseRed else MaterialTheme.colorScheme.onSurface
                 )
-                if (canDelete) {
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                if (account.accountType == "CREDIT_CARD" && account.creditLimit > 0) {
+                    Text(
+                        text = if (isSensitiveRevealed) "Limit: ${CurrencyFormatter.formatInr(account.creditLimit)}" else "Limit: ₹••••••",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -339,128 +501,45 @@ fun AccountItemCard(
 }
 
 @Composable
-fun CreditCardItemCard(
-    account: AccountEntity,
-    isRevealed: Boolean,
-    canDelete: Boolean,
-    onDelete: () -> Unit
+fun AccountsRestrictedView(
+    currentUserRole: UserRole,
+    modifier: Modifier = Modifier
 ) {
-    val reminder = remember(account) { CreditCardBillReminderHelper.calculateBillStatus(account) }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("credit_card_${account.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(ExpenseRed.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CreditCard,
-                        contentDescription = null,
-                        tint = ExpenseRed,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = account.name,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "${account.institution} • Billing Day: ${account.billingCycleDay ?: 1}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Outstanding",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    SensitiveText(
-                        amount = account.balance,
-                        isRevealed = isRevealed,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = ExpenseRed
-                    )
-                }
-            }
-
-            if (account.creditLimit != null && account.creditLimit > 0) {
-                Spacer(modifier = Modifier.height(12.dp))
-                val utilization = (account.balance / account.creditLimit).toFloat().coerceIn(0f, 1f)
-                LinearProgressIndicator(
-                    progress = { utilization },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = if (utilization > 0.5f) ExpenseRed else PrimaryBlue,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "Limit: ${CurrencyFormatter.formatInr(account.creditLimit, obscure = !isRevealed)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "${(utilization * 100).toInt()}% Used",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = if (utilization > 0.5f) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            if (reminder != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (reminder.isOverdue) ExpenseRed.copy(alpha = 0.1f) else WarningAmber.copy(alpha = 0.1f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Event,
-                            contentDescription = null,
-                            tint = if (reminder.isOverdue) ExpenseRed else WarningAmber,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = reminder.reminderMessage,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (reminder.isOverdue) ExpenseRed else WarningAmber
-                        )
-                    }
-                }
-            }
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.errorContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(36.dp)
+            )
         }
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Accounts & Assets Restricted",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Viewing and editing bank accounts, credit cards, LIC policies, MFs, and NPS schemes is restricted to Household Admin and Contributors.\n\nYour current role is '${currentUserRole.displayName}'. You can view dashboard analytics, log household transactions, and download monthly reports.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            lineHeight = 18.sp
+        )
     }
 }

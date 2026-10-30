@@ -472,57 +472,6 @@ fun AddExpenseSheet(
                 }
             }
 
-            // Associated Bank Account or Credit Card Selection
-            if (accounts.isNotEmpty()) {
-                val relevantAccounts = remember(selectedPaymentMethod, accounts) {
-                    when (selectedPaymentMethod) {
-                        PaymentMethod.CREDIT_CARD -> accounts.filter { it.accountType == "CREDIT_CARD" }
-                        PaymentMethod.UPI, PaymentMethod.NET_BANKING -> accounts.filter { it.accountType in listOf("BANK", "CASH", "DEBIT_CARD") }
-                        PaymentMethod.DEBIT_CARD -> accounts.filter { it.accountType in listOf("BANK", "DEBIT_CARD") }
-                        else -> accounts
-                    }.ifEmpty { accounts }
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = when (selectedPaymentMethod) {
-                            PaymentMethod.CREDIT_CARD -> "Choose Credit Card"
-                            PaymentMethod.UPI, PaymentMethod.NET_BANKING -> "Choose Bank Account / UPI Source"
-                            else -> "Associated Account or Card"
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        relevantAccounts.forEach { acc ->
-                            val isSelected = selectedAccountId == acc.id
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { selectedAccountId = acc.id },
-                                label = {
-                                    Text(
-                                        text = "${acc.name} (${acc.holder})${if (acc.accountNumberMask.isNotBlank()) " • ${acc.accountNumberMask}" else ""}",
-                                        fontSize = 12.sp
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = if (acc.accountType == "CREDIT_CARD") Icons.Default.CreditCard else Icons.Default.AccountBalance,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
             // Optional Note
             OutlinedTextField(
                 value = notesText,

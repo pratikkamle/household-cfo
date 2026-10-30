@@ -1,177 +1,273 @@
 package com.example.data.repository
 
 import com.example.data.local.AppDatabase
-import com.example.data.model.*
+import com.example.data.local.AccountDao
+import com.example.data.local.BudgetDao
+import com.example.data.local.GoalDao
+import com.example.data.local.HouseholdDao
+import com.example.data.local.RecurringRuleDao
+import com.example.data.local.TransactionDao
+import com.example.data.local.UserDao
+import com.example.data.model.AccountEntity
+import com.example.data.model.CategoryBudgetEntity
+import com.example.data.model.FinancialGoalEntity
+import com.example.data.model.HouseholdEntity
+import com.example.data.model.RecurringTransactionEntity
+import com.example.data.model.TransactionEntity
+import com.example.data.model.UserEntity
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-class FinanceRepository(private val database: AppDatabase) {
-
-    fun getPrimaryHouseholdFlow(): Flow<HouseholdEntity?> =
-        database.householdDao().getPrimaryHouseholdFlow()
+class FinanceRepository(
+    private val database: AppDatabase,
+    private val householdDao: HouseholdDao = database.householdDao(),
+    private val userDao: UserDao = database.userDao(),
+    private val transactionDao: TransactionDao = database.transactionDao(),
+    private val recurringRuleDao: RecurringRuleDao = database.recurringRuleDao(),
+    private val accountDao: AccountDao = database.accountDao(),
+    private val budgetDao: BudgetDao = database.budgetDao(),
+    private val goalDao: GoalDao = database.goalDao()
+) {
+    fun getHousehold(): Flow<HouseholdEntity?> =
+        householdDao.getHouseholdById(1L)
 
     suspend fun getPrimaryHousehold(): HouseholdEntity? =
-        database.householdDao().getPrimaryHousehold()
+        householdDao.getPrimaryHousehold()
 
-    suspend fun getHouseholdByInviteCode(code: String): HouseholdEntity? =
-        database.householdDao().getHouseholdByInviteCode(code)
+    suspend fun getHouseholdByName(name: String): HouseholdEntity? =
+        householdDao.getHouseholdByName(name)
 
     suspend fun getHouseholdByAdminEmail(email: String): HouseholdEntity? =
-        database.householdDao().getHouseholdByAdminEmail(email)
+        householdDao.getHouseholdByAdminEmail(email)
 
-    suspend fun insertHousehold(household: HouseholdEntity): Long =
-        database.householdDao().insertHousehold(household)
+    suspend fun getHouseholdByInviteCode(code: String): HouseholdEntity? =
+        householdDao.getHouseholdByInviteCode(code)
 
     suspend fun updateHousehold(household: HouseholdEntity) =
-        database.householdDao().updateHousehold(household)
+        householdDao.updateHousehold(household)
 
-    fun getAllUsers(): Flow<List<UserEntity>> =
-        database.userDao().getAllUsersFlow()
+    suspend fun saveHousehold(household: HouseholdEntity): Long =
+        householdDao.insertHousehold(household)
 
-    suspend fun getAllUsersSync(): List<UserEntity> =
-        database.userDao().getAllUsers()
+    suspend fun clearHouseholds() =
+        householdDao.clearHouseholds()
 
-    fun getUserById(id: Long): Flow<UserEntity?> =
-        database.userDao().getUserById(id)
-
-    suspend fun getUserByIdSync(id: Long): UserEntity? =
-        database.userDao().getUserByIdSync(id)
+    fun getUsers(): Flow<List<UserEntity>> =
+        userDao.getAllUsers()
 
     suspend fun getUserByEmail(email: String): UserEntity? =
-        database.userDao().getUserByEmail(email)
+        userDao.getUserByEmail(email)
 
     suspend fun getUserByName(name: String): UserEntity? =
-        database.userDao().getUserByName(name)
+        userDao.getUserByName(name)
 
-    suspend fun insertUser(user: UserEntity): Long =
-        database.userDao().insertUser(user)
+    suspend fun getUserByHouseholdAndName(householdId: Long, name: String): UserEntity? =
+        userDao.getUserByHouseholdAndName(householdId, name)
 
-    suspend fun insertUsers(users: List<UserEntity>) =
-        database.userDao().insertUsers(users)
+    suspend fun saveUser(user: UserEntity): Long =
+        userDao.insertUser(user)
 
     suspend fun updateUser(user: UserEntity) =
-        database.userDao().updateUser(user)
+        userDao.updateUser(user)
 
-    suspend fun deleteUser(id: Long) =
-        database.userDao().deleteUser(id)
+    suspend fun getUserByIdSync(userId: Long): UserEntity? =
+        userDao.getUserByIdSync(userId)
 
-    fun getAllAccounts(): Flow<List<AccountEntity>> =
-        database.accountDao().getAllAccountsFlow()
+    suspend fun deleteUser(userId: Long) =
+        userDao.deleteUser(userId)
 
-    suspend fun getAllAccountsSync(): List<AccountEntity> =
-        database.accountDao().getAllAccounts()
-
-    suspend fun getAccountById(id: Long): AccountEntity? =
-        database.accountDao().getAccountById(id)
-
-    suspend fun insertAccount(account: AccountEntity): Long =
-        database.accountDao().insertAccount(account)
-
-    suspend fun insertAccounts(accounts: List<AccountEntity>) =
-        database.accountDao().insertAccounts(accounts)
-
-    suspend fun updateAccount(account: AccountEntity) =
-        database.accountDao().updateAccount(account)
-
-    suspend fun deleteAccount(id: Long) =
-        database.accountDao().deleteAccount(id)
-
-    fun getBudgets(monthYear: String = ""): Flow<List<CategoryBudgetEntity>> =
-        database.budgetDao().getAllBudgetsFlow()
-
-    suspend fun getBudgetsSync(): List<CategoryBudgetEntity> =
-        database.budgetDao().getAllBudgets()
-
-    suspend fun insertBudgets(budgets: List<CategoryBudgetEntity>) =
-        database.budgetDao().insertBudgets(budgets)
-
-    suspend fun insertBudget(budget: CategoryBudgetEntity): Long =
-        database.budgetDao().insertBudget(budget)
-
-    suspend fun deleteBudgetByCategory(category: String) =
-        database.budgetDao().deleteBudgetByCategory(category)
-
-    fun getAllTransactions(): Flow<List<TransactionEntity>> =
-        database.transactionDao().getAllTransactions()
+    suspend fun deleteUserByMatching(name: String, email: String, uid: String) =
+        userDao.deleteUserByMatching(name, email, uid)
 
     fun getTransactionsForMonth(monthYear: String): Flow<List<TransactionEntity>> =
-        database.transactionDao().getTransactionsForMonth(monthYear)
+        transactionDao.getTransactionsByMonth(monthYear)
 
-    suspend fun insertTransaction(transaction: TransactionEntity): Long =
-        database.transactionDao().insertTransaction(transaction)
-
-    suspend fun insertTransactions(transactions: List<TransactionEntity>) =
-        database.transactionDao().insertTransactions(transactions)
-
-    suspend fun updateTransaction(transaction: TransactionEntity) =
-        database.transactionDao().updateTransaction(transaction)
-
-    suspend fun deleteTransaction(transaction: TransactionEntity) =
-        database.transactionDao().deleteTransaction(transaction)
-
-    suspend fun deleteTransactionById(id: Long) =
-        database.transactionDao().deleteTransactionById(id)
+    fun getTransactionsForMonthAndMember(monthYear: String, member: String): Flow<List<TransactionEntity>> =
+        transactionDao.getTransactionsByMonthAndMember(monthYear, member)
 
     fun getAllRecurringRules(): Flow<List<RecurringTransactionEntity>> =
-        database.recurringRuleDao().getAllRecurringRules()
+        recurringRuleDao.getAllRules()
 
-    suspend fun getAllRecurringRulesSync(): List<RecurringTransactionEntity> =
-        database.recurringRuleDao().getAllRecurringRulesSync()
+    fun getAllAccounts(): Flow<List<AccountEntity>> =
+        accountDao.getAllAccounts()
 
-    suspend fun insertRecurringRule(rule: RecurringTransactionEntity): Long =
-        database.recurringRuleDao().insertRecurringRule(rule)
+    fun getBudgets(monthYear: String): Flow<List<CategoryBudgetEntity>> =
+        budgetDao.getBudgets(monthYear)
 
-    suspend fun insertRecurringRules(rules: List<RecurringTransactionEntity>) =
-        database.recurringRuleDao().insertRecurringRules(rules)
+    fun getRecentMerchants(): Flow<List<String>> =
+        transactionDao.getRecentMerchants()
 
-    suspend fun updateRecurringRule(rule: RecurringTransactionEntity) =
-        database.recurringRuleDao().updateRecurringRule(rule)
+    suspend fun getSuggestionForMerchant(merchant: String): TransactionEntity? =
+        transactionDao.getLastTransactionForMerchant(merchant)
 
-    suspend fun deleteRecurringRule(id: Long) =
-        database.recurringRuleDao().deleteRecurringRuleById(id)
+    suspend fun checkRecurringRulePaid(ruleId: Long, monthYear: String): Boolean =
+        transactionDao.getTransactionForRecurringRule(ruleId, monthYear) != null
 
-    fun getGoals(householdId: Long = 1): Flow<List<FinancialGoalEntity>> =
-        database.goalDao().getAllGoalsFlow()
+    suspend fun insertTransaction(transaction: TransactionEntity): Long {
+        val id = transactionDao.insertTransaction(transaction)
+        // Update account balance
+        val accId = transaction.accountId
+        if (accId != null && accId > 0) {
+            val delta = when (transaction.type) {
+                "INCOME" -> transaction.amount
+                "EXPENSE" -> -transaction.amount
+                "INVESTMENT" -> -transaction.amount
+                else -> 0.0
+            }
+            accountDao.updateBalance(accId, delta)
+        }
+        return id
+    }
 
-    suspend fun insertGoal(goal: FinancialGoalEntity): Long =
-        database.goalDao().insertGoal(goal)
+    suspend fun updateTransaction(newTx: TransactionEntity) {
+        val oldTx = transactionDao.getTransactionById(newTx.id)
+        transactionDao.updateTransaction(newTx)
 
-    suspend fun insertGoals(goals: List<FinancialGoalEntity>) =
-        database.goalDao().insertGoals(goals)
+        // Reconcile account balances if account or amount/type changed
+        if (oldTx != null) {
+            val oldAccId = oldTx.accountId
+            if (oldAccId != null && oldAccId > 0) {
+                val oldReversal = when (oldTx.type) {
+                    "INCOME" -> -oldTx.amount
+                    "EXPENSE" -> oldTx.amount
+                    "INVESTMENT" -> oldTx.amount
+                    else -> 0.0
+                }
+                accountDao.updateBalance(oldAccId, oldReversal)
+            }
 
-    suspend fun updateGoal(goal: FinancialGoalEntity) =
-        database.goalDao().updateGoal(goal)
-
-    suspend fun deleteGoal(id: Long) =
-        database.goalDao().deleteGoal(id)
-
-    fun getAllMemberProfiles(): Flow<List<MemberProfile>> =
-        combine(database.userDao().getAllUsersFlow(), database.transactionDao().getAllTransactions()) { users, transactions ->
-            users.map { u ->
-                val memberTxs = transactions.filter { it.paidBy.equals(u.name, ignoreCase = true) || it.userId == u.id }
-                val expense = memberTxs.filter { it.type == "EXPENSE" }.sumOf { it.amount }
-                val income = memberTxs.filter { it.type == "INCOME" }.sumOf { it.amount }
-                MemberProfile(
-                    id = u.id,
-                    name = u.name,
-                    email = u.email,
-                    role = u.role,
-                    avatarInitial = u.initial,
-                    colorHex = u.colorHex,
-                    photoUrl = u.photoUrl,
-                    totalExpense = expense,
-                    totalIncome = income
-                )
+            val newAccId = newTx.accountId
+            if (newAccId != null && newAccId > 0) {
+                val newDelta = when (newTx.type) {
+                    "INCOME" -> newTx.amount
+                    "EXPENSE" -> -newTx.amount
+                    "INVESTMENT" -> -newTx.amount
+                    else -> 0.0
+                }
+                accountDao.updateBalance(newAccId, newDelta)
             }
         }
+    }
 
-    suspend fun clearAllLocalData() {
-        database.transactionDao().clearAll()
-        database.budgetDao().clearAll()
-        database.accountDao().clearAll()
-        database.recurringRuleDao().clearAll()
-        database.goalDao().clearAll()
-        database.userDao().clearAll()
-        database.householdDao().clearAll()
+    suspend fun deleteTransaction(transaction: TransactionEntity) {
+        transactionDao.deleteTransactionById(transaction.id)
+        val accId = transaction.accountId
+        if (accId != null && accId > 0) {
+            val reversalDelta = when (transaction.type) {
+                "INCOME" -> -transaction.amount
+                "EXPENSE" -> transaction.amount
+                "INVESTMENT" -> transaction.amount
+                else -> 0.0
+            }
+            accountDao.updateBalance(accId, reversalDelta)
+        }
+    }
+
+    suspend fun markRecurringAsPaid(rule: RecurringTransactionEntity, monthYear: String): Long {
+        val now = System.currentTimeMillis()
+        val isIncome = rule.type == "INCOME"
+        val paymentMethod = if (isIncome && (rule.paymentMethod.contains("DEBIT", ignoreCase = true) || rule.paymentMethod.isBlank())) {
+            "Auto Credit"
+        } else {
+            rule.paymentMethod
+        }
+        val transaction = TransactionEntity(
+            householdId = rule.householdId,
+            userId = rule.userId,
+            amount = rule.amount,
+            category = rule.category,
+            paidBy = rule.paidBy,
+            paymentMethod = paymentMethod,
+            accountId = rule.accountId,
+            accountName = rule.accountName,
+            merchant = rule.title,
+            notes = "Scheduled recurring payment for $monthYear",
+            timestamp = now,
+            monthYear = monthYear,
+            nature = rule.nature,
+            type = rule.type,
+            isRecurring = true,
+            recurringRuleId = rule.id
+        )
+        return insertTransaction(transaction)
+    }
+
+    suspend fun saveBudget(budget: CategoryBudgetEntity) =
+        budgetDao.insertBudget(budget)
+
+    suspend fun insertBudgets(budgets: List<CategoryBudgetEntity>) =
+        budgetDao.insertBudgets(budgets)
+
+    suspend fun saveBudget(category: String, amount: Double) =
+        budgetDao.insertBudget(CategoryBudgetEntity(category = category, monthlyBudget = amount))
+
+    suspend fun saveRecurringRule(rule: RecurringTransactionEntity): Long =
+        recurringRuleDao.insertRule(rule)
+
+    suspend fun updateRecurringRule(rule: RecurringTransactionEntity) =
+        recurringRuleDao.updateRule(rule)
+
+    suspend fun deleteRecurringRule(id: Long) =
+        recurringRuleDao.deleteRuleById(id)
+
+    suspend fun saveAccount(account: AccountEntity): Long =
+        accountDao.insertAccount(account)
+
+    suspend fun updateAccount(account: AccountEntity) =
+        accountDao.updateAccount(account)
+
+    suspend fun deleteAccount(id: Long) =
+        accountDao.deleteAccountById(id)
+
+    suspend fun updateUserRole(userId: Long, newRole: String) =
+        userDao.updateUserRole(userId, newRole)
+
+    // Financial Goals
+    fun getGoals(householdId: Long = 1L): Flow<List<FinancialGoalEntity>> =
+        goalDao.getGoalsByHousehold(householdId)
+
+    suspend fun saveGoal(goal: FinancialGoalEntity): Long =
+        goalDao.insertGoal(goal)
+
+    suspend fun updateGoal(goal: FinancialGoalEntity) =
+        goalDao.updateGoal(goal)
+
+    suspend fun deleteGoal(id: Long) =
+        goalDao.deleteGoal(id)
+
+    suspend fun addGoalContribution(id: Long, additionalAmount: Double) {
+        val existing = goalDao.getGoalById(id) ?: return
+        val newSaved = (existing.currentSaved + additionalAmount).coerceAtLeast(0.0)
+        val isCompleted = newSaved >= existing.targetAmount
+        goalDao.updateGoalProgress(id, newSaved, isCompleted)
+    }
+
+    suspend fun toggleGoalCompleted(id: Long) {
+        val existing = goalDao.getGoalById(id) ?: return
+        goalDao.updateGoalProgress(id, existing.currentSaved, !existing.isCompleted)
+    }
+
+    suspend fun clearAllData() {
+        transactionDao.clearAllTransactions()
+        recurringRuleDao.clearAllRules()
+    }
+
+    suspend fun resetDatabase(reseedBaseline: Boolean = true) {
+        database.resetDatabase(reseedBaseline)
+    }
+
+    fun exportTransactionsToCsv(transactions: List<TransactionEntity>): String {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        val sb = StringBuilder()
+        sb.append("ID,Date,Merchant,Category,Amount,Type,Nature,Paid By,Payment Method,Account,Notes\n")
+        transactions.forEach { t ->
+            val dateStr = dateFormat.format(Date(t.timestamp))
+            val safeMerchant = t.merchant.replace("\"", "\"\"")
+            val safeNotes = t.notes.replace("\"", "\"\"")
+            sb.append("${t.id},\"$dateStr\",\"$safeMerchant\",\"${t.category}\",${t.amount},\"${t.type}\",\"${t.nature}\",\"${t.paidBy}\",\"${t.paymentMethod}\",\"${t.accountName}\",\"$safeNotes\"\n")
+        }
+        return sb.toString()
     }
 }

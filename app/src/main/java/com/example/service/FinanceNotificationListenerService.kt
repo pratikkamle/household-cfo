@@ -7,11 +7,12 @@ import android.util.Log
 class FinanceNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        super.onNotificationPosted(sbn)
+        if (sbn == null) return
         try {
-            if (sbn == null) return
             SmartNotificationManager.onNotificationReceived(applicationContext, sbn)
-        } catch (t: Throwable) {
-            Log.e("FinanceNotifListener", "Safety catch inbound notification: ${t.message}")
+        } catch (e: Exception) {
+            Log.e("FinanceNotifListener", "Failed to process inbound notification", e)
         }
     }
 

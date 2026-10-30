@@ -126,25 +126,33 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             HouseholdCfoTheme {
-                val isUserAuthenticated by viewModel.isUserAuthenticated.collectAsStateWithLifecycle()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    val isUserAuthenticated by viewModel.isUserAuthenticated.collectAsStateWithLifecycle()
 
-                if (!isUserAuthenticated) {
-                    AuthScreen(
-                        onSignInWithEmail = { email, pass, onResult ->
-                            viewModel.signInWithEmail(email, pass, onResult)
-                        },
-                        onRegisterWithEmail = { name, email, pass, onResult ->
-                            viewModel.registerWithEmail(name, email, pass, onResult)
-                        },
-                        onSignInWithGoogle = { act ->
-                            viewModel.signInWithGoogle(act)
-                        },
-                        onContinueOfflineAdmin = { name, email ->
-                            viewModel.continueAsOfflineAdmin(name, email)
-                        }
+                    if (!isUserAuthenticated) {
+                        AuthScreen(
+                            onSignInWithEmail = { email, pass, onResult ->
+                                viewModel.signInWithEmail(email, pass, onResult)
+                            },
+                            onRegisterWithEmail = { name, email, pass, onResult ->
+                                viewModel.registerWithEmail(name, email, pass, onResult)
+                            },
+                            onSignInWithGoogle = { act, onResult ->
+                                viewModel.signInWithGoogle(act, onResult)
+                            },
+                            onContinueOfflineAdmin = { name, email ->
+                                viewModel.continueAsOfflineAdmin(name, email)
+                            }
+                        )
+                    } else {
+                        MainApp(viewModel = viewModel)
+                    }
+
+                    com.example.ui.components.DebugCrashReporterBanner(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 36.dp)
                     )
-                } else {
-                    MainApp(viewModel = viewModel)
                 }
             }
         }

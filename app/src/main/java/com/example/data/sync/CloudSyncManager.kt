@@ -2,385 +2,858 @@ package com.example.data.sync
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.util.Log
+import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
+import com.example.R
+import com.example.ui.components.CrashDiagnostics
 import com.example.data.local.AppDatabase
-import com.example.data.model.*
+import com.example.data.model.AccountEntity
+import com.example.data.model.AuthAccount
+import com.example.data.model.CategoryBudgetEntity
+import com.example.data.model.HouseholdEntity
+import com.example.data.model.RecurringTransactionEntity
+import com.example.data.model.TransactionEntity
+import com.example.data.model.UserEntity
+import com.example.util.CategoryBudgetScaler
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
-import com.google.firebase.firestore.*
-import kotlinx.coroutines.*
+import com.google.firebase.auth.UserProfileChangeRequest
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+
+sealed class SyncState {
+    object Idle : SyncState()
+    object Syncing : SyncState()
+    data class Live(val householdCode: String) : SyncState()
+    data class Success(val message: String) : SyncState()
+    data class Error(val error: String) : SyncState()
+}
 
 class CloudSyncManager(
     private val context: Context,
     private val database: AppDatabase
 ) {
-    private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
-    private val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
+    private val auth: FirebaseAuth? by lazy {
+        try {
+            if (FirebaseApp.getApps(context).isEmpty()) {
+                FirebaseApp.initializeApp(context)
+            }
+            Firebase.auth
+        } catch (e: Exception) {
+            Log.w("CloudSync", "FirebaseAuth initialization deferred: ${e.message}")
+            null
+        }
+    }
+
+    private val credentialManager: CredentialManager? by lazy {
+        try {
+            CredentialManager.create(context)
+        } catch (t: Throwable) {
+            Log.w("CloudSync", "CredentialManager create error: ${t.message}")
+            null
+        }
+    }
+
+    // Custom Firestore database instance with resilient fallback
+    private val firestore: FirebaseFirestore? by lazy {
+        try {
+            if (FirebaseApp.getApps(context).isEmpty()) {
+                FirebaseApp.initializeApp(context)
+            }
+            val dbId = try {
+                context.getString(R.string.firestore_database_id)
+            } catch (e: Exception) {
+                ""
+            }
+            if (dbId.isNotBlank()) {
+                try {
+                    FirebaseFirestore.getInstance(FirebaseApp.getInstance(), dbId)
+                } catch (t: Throwable) {
+                    FirebaseFirestore.getInstance(dbId)
+                }
+            } else {
+                FirebaseFirestore.getInstance()
+            }
+        } catch (e: Exception) {
+            Log.w("CloudSync", "Firestore instance error: ${e.message}")
+            try {
+                FirebaseFirestore.getInstance()
+            } catch (t: Throwable) {
+                null
+            }
+        }
+    }
+
+    private val authPrefs = context.getSharedPreferences("household_auth_prefs", Context.MODE_PRIVATE)
 
     private val _currentUser = MutableStateFlow<FirebaseUser?>(null)
     val currentUser: StateFlow<FirebaseUser?> = _currentUser.asStateFlow()
 
-    private val _authAccount = MutableStateFlow<AuthAccount?>(null)
+    private val _authAccount = MutableStateFlow<AuthAccount?>(
+        authPrefs.getString("auth_user_email", null)?.let { savedEmail ->
+            AuthAccount(
+                uid = authPrefs.getString("auth_user_uid", "local_user") ?: "local_user",
+                email = savedEmail,
+                displayName = authPrefs.getString("auth_user_name", "Household Admin") ?: "Household Admin",
+                isGoogle = authPrefs.getBoolean("auth_is_google", false),
+                photoUrl = authPrefs.getString("auth_user_photo_url", null)
+            )
+        }
+    )
     val authAccount: StateFlow<AuthAccount?> = _authAccount.asStateFlow()
 
-    private val _syncState = MutableStateFlow(SyncState())
+    private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     private val activeListeners = mutableListOf<ListenerRegistration>()
     private var activeHouseholdCode: String? = null
 
     init {
-        auth.addAuthStateListener { fbAuth ->
-            val user = fbAuth.currentUser
-            _currentUser.value = user
-            if (user != null) {
-                _authAccount.value = AuthAccount(
-                    uid = user.uid,
-                    email = user.email ?: "",
-                    displayName = user.displayName ?: user.email?.substringBefore("@") ?: "User",
-                    photoUrl = user.photoUrl?.toString()
-                )
-            } else {
-                _authAccount.value = null
+        try {
+            auth?.let { fbAuth ->
+                _currentUser.value = fbAuth.currentUser
+                syncAuthAccountFromFirebase(fbAuth.currentUser)
+                fbAuth.addAuthStateListener { firebaseAuth ->
+                    _currentUser.value = firebaseAuth.currentUser
+                    syncAuthAccountFromFirebase(firebaseAuth.currentUser)
+                }
             }
+        } catch (e: Exception) {
+            Log.w("CloudSync", "Could not register auth listener: ${e.message}")
         }
+    }
+
+    private fun syncAuthAccountFromFirebase(user: FirebaseUser?) {
+        if (user != null) {
+            val account = AuthAccount(
+                uid = user.uid,
+                email = user.email ?: "",
+                displayName = user.displayName?.ifBlank { null }
+                    ?: (user.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"),
+                isGoogle = user.providerData.any { it.providerId == "google.com" },
+                photoUrl = user.photoUrl?.toString()
+            )
+            setAuthenticatedUser(account)
+        }
+    }
+
+    fun setAuthenticatedUser(account: AuthAccount) {
+        authPrefs.edit()
+            .putString("auth_user_email", account.email)
+            .putString("auth_user_name", account.displayName)
+            .putString("auth_user_uid", account.uid)
+            .putBoolean("auth_is_google", account.isGoogle)
+            .putString("auth_user_photo_url", account.photoUrl)
+            .apply()
+        _authAccount.value = account
     }
 
     fun attemptSilentSignIn(scope: CoroutineScope) {
-        val user = auth.currentUser
-        if (user != null) {
-            _currentUser.value = user
-            _authAccount.value = AuthAccount(
-                uid = user.uid,
-                email = user.email ?: "",
-                displayName = user.displayName ?: user.email?.substringBefore("@") ?: "User",
-                photoUrl = user.photoUrl?.toString()
-            )
-        }
-    }
-
-    fun signInWithEmail(email: String, pass: String, onResult: (Boolean, String?) -> Unit) {
-        auth.signInWithEmailAndPassword(email.trim(), pass)
-            .addOnSuccessListener { result ->
-                val user = result.user
-                if (user != null) {
-                    _currentUser.value = user
-                    _authAccount.value = AuthAccount(
-                        uid = user.uid,
-                        email = user.email ?: "",
-                        displayName = user.displayName ?: email.substringBefore("@"),
-                        photoUrl = null
-                    )
-                }
-                onResult(true, null)
-            }
-            .addOnFailureListener { e ->
-                onResult(false, e.message ?: "Sign in failed")
-            }
-    }
-
-    fun registerWithEmail(name: String, email: String, pass: String, onResult: (Boolean, String?) -> Unit) {
-        auth.createUserWithEmailAndPassword(email.trim(), pass)
-            .addOnSuccessListener { result ->
-                val user = result.user
-                if (user != null) {
-                    _currentUser.value = user
-                    _authAccount.value = AuthAccount(
-                        uid = user.uid,
-                        email = user.email ?: "",
-                        displayName = name.trim().ifBlank { email.substringBefore("@") },
-                        photoUrl = null
-                    )
-                }
-                onResult(true, null)
-            }
-            .addOnFailureListener { e ->
-                onResult(false, e.message ?: "Registration failed")
-            }
-    }
-
-    fun signInWithGoogle(activity: Activity) {
-        val credentialManager = CredentialManager.create(activity)
-        val serverClientId = "690696722293-l1dm6brg6hf9474ntaiu8q5e6sbfqv08.apps.googleusercontent.com"
-
-        val googleIdOption = GetSignInWithGoogleOption.Builder(serverClientId)
-            .build()
-
-        val request = GetCredentialRequest.Builder()
-            .addCredentialOption(googleIdOption)
-            .build()
-
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                val result = credentialManager.getCredential(activity, request)
-                val credential = result.credential
-                if (credential is GoogleIdTokenCredential) {
-                    val idToken = credential.idToken
-                    val authCredential = GoogleAuthProvider.getCredential(idToken, null)
-                    auth.signInWithCredential(authCredential).await()
-                }
-            } catch (e: GetCredentialException) {
-                Log.w("CloudSync", "Google Sign-In canceled or failed: ${e.message}")
-            } catch (e: Exception) {
-                Log.e("CloudSync", "Sign-in error: ${e.message}")
-            }
-        }
-    }
-
-    fun continueAsOfflineAdmin(name: String, email: String) {
-        val cleanName = name.trim().ifBlank { "Pratik" }
-        val cleanEmail = email.trim().ifBlank { "admin@householdcfo.local" }
-        _authAccount.value = AuthAccount(
-            uid = "offline_" + cleanName.lowercase().replace(" ", "_"),
-            email = cleanEmail,
-            displayName = cleanName
-        )
-    }
-
-    fun signOut(scope: CoroutineScope) {
-        stopRealtimeSync()
         try {
-            auth.signOut()
+            val fbAuth = auth ?: return
+            if (fbAuth.currentUser != null) {
+                _currentUser.value = fbAuth.currentUser
+                syncAuthAccountFromFirebase(fbAuth.currentUser)
+                return
+            }
+            // On OEM devices (Oppo ColorOS, Realme, Vivo), CredentialManager requires an Activity context
+            // and throws WindowManager.BadTokenException if invoked on an Application context.
+            if (context !is Activity) {
+                return
+            }
+            val clientId = try {
+                context.getString(R.string.default_web_client_id)
+            } catch (e: Exception) {
+                return
+            }
+
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(true)
+                .setServerClientId(clientId)
+                .setAutoSelectEnabled(true)
+                .build()
+
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
+
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val cm = credentialManager ?: return@launch
+                    val result = cm.getCredential(context, request)
+                    val credential = result.credential
+                    if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                        val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                        val authCred = GoogleAuthProvider.getCredential(token, null)
+                        fbAuth.signInWithCredential(authCred).await()
+                        _currentUser.value = fbAuth.currentUser
+                        syncAuthAccountFromFirebase(fbAuth.currentUser)
+                    }
+                } catch (t: Throwable) {
+                    Log.d("CloudSync", "Silent sign-in not available: ${t.message}")
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w("CloudSync", "Silent sign-in safety warning: ${t.message}")
+        }
+    }
+
+    fun signInWithEmail(
+        email: String,
+        pass: String,
+        scope: CoroutineScope,
+        onSuccess: (AuthAccount) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val fbAuth = auth
+        if (fbAuth == null) {
+            // Offline/Local fallback
+            val account = AuthAccount(
+                uid = "local_" + email.hashCode(),
+                email = email.trim(),
+                displayName = email.substringBefore("@").replaceFirstChar { it.uppercase() }
+            )
+            setAuthenticatedUser(account)
+            onSuccess(account)
+            return
+        }
+        scope.launch {
+            try {
+                val res = fbAuth.signInWithEmailAndPassword(email.trim(), pass).await()
+                val user = res.user
+                if (user != null) {
+                    val account = AuthAccount(
+                        uid = user.uid,
+                        email = user.email ?: email.trim(),
+                        displayName = user.displayName?.ifBlank { null }
+                            ?: (user.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"),
+                        isGoogle = false
+                    )
+                    setAuthenticatedUser(account)
+                    _currentUser.value = user
+                    onSuccess(account)
+                } else {
+                    onError("Unable to retrieve user credentials.")
+                }
+            } catch (e: Exception) {
+                Log.e("CloudSync", "Email sign in error: ${e.message}", e)
+                onError(e.localizedMessage ?: "Invalid email or password.")
+            }
+        }
+    }
+
+    fun registerWithEmail(
+        name: String,
+        email: String,
+        pass: String,
+        scope: CoroutineScope,
+        onSuccess: (AuthAccount) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val fbAuth = auth
+        if (fbAuth == null) {
+            val account = AuthAccount(
+                uid = "local_" + email.hashCode(),
+                email = email.trim(),
+                displayName = name.trim()
+            )
+            setAuthenticatedUser(account)
+            onSuccess(account)
+            return
+        }
+        scope.launch {
+            try {
+                val res = fbAuth.createUserWithEmailAndPassword(email.trim(), pass).await()
+                val user = res.user
+                if (user != null) {
+                    try {
+                        val profileUpdates = UserProfileChangeRequest.Builder()
+                            .setDisplayName(name.trim())
+                            .build()
+                        user.updateProfile(profileUpdates).await()
+                    } catch (e: Exception) {
+                        Log.w("CloudSync", "Could not set display name: ${e.message}")
+                    }
+                    val account = AuthAccount(
+                        uid = user.uid,
+                        email = user.email ?: email.trim(),
+                        displayName = name.trim(),
+                        isGoogle = false
+                    )
+                    setAuthenticatedUser(account)
+                    _currentUser.value = user
+                    onSuccess(account)
+                } else {
+                    onError("Failed to create user account.")
+                }
+            } catch (e: Exception) {
+                Log.e("CloudSync", "Registration error: ${e.message}", e)
+                onError(e.localizedMessage ?: "Registration failed.")
+            }
+        }
+    }
+
+    fun signInWithGoogle(
+        activity: Activity,
+        scope: CoroutineScope,
+        onSuccess: (AuthAccount) -> Unit = {},
+        onCancel: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val fbAuth = auth
+        if (fbAuth == null) {
+            val err = "Firebase Authentication is not initialized on this device"
+            CrashDiagnostics.recordLog("AUTH", err)
+            onError(err)
+            return
+        }
+
+        val clientId = try {
+            context.getString(R.string.default_web_client_id)
         } catch (e: Exception) {
-            Log.w("CloudSync", "Sign out exception: ${e.message}")
+            ""
+        }
+
+        if (clientId.isBlank()) {
+            val err = "Google Web Client ID (default_web_client_id) is missing from resources"
+            CrashDiagnostics.recordLog("AUTH", err)
+            onError(err)
+            return
+        }
+
+        CrashDiagnostics.recordLog("AUTH", "Launching Google Sign-In with serverClientId=${clientId.take(15)}...")
+
+        val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+        val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
+
+        scope.launch {
+            try {
+                val cm = credentialManager
+                if (cm == null) {
+                    val err = "Credential Manager is unavailable on this device (Google Play Services missing or outdated)"
+                    CrashDiagnostics.recordLog("AUTH", err)
+                    onError(err)
+                    return@launch
+                }
+
+                val result = cm.getCredential(activity, request)
+                val credential = result.credential
+                val credTypeStr = if (credential is CustomCredential) credential.type else credential.javaClass.simpleName
+                CrashDiagnostics.recordLog("AUTH", "CredentialManager returned credential type: $credTypeStr")
+
+                var idToken: String? = null
+                var extractedEmail: String? = null
+                var extractedDisplayName: String? = null
+                var extractedPhotoUrl: String? = null
+
+                if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    try {
+                        val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                        idToken = googleIdTokenCredential.idToken
+                        extractedEmail = googleIdTokenCredential.id
+                        extractedDisplayName = googleIdTokenCredential.displayName
+                        extractedPhotoUrl = googleIdTokenCredential.profilePictureUri?.toString()
+                    } catch (parseEx: Throwable) {
+                        Log.w("CloudSync", "GoogleIdTokenCredential parser warning: ${parseEx.message}")
+                        idToken = credential.data.getString("androidx.credentials.BUNDLE_KEY_ID_TOKEN")
+                            ?: credential.data.getString("id_token")
+                    }
+                } else if (credential is CustomCredential) {
+                    idToken = credential.data.getString("androidx.credentials.BUNDLE_KEY_ID_TOKEN")
+                        ?: credential.data.getString("id_token")
+                }
+
+                if (idToken.isNullOrBlank()) {
+                    val err = "Google Sign-In returned an empty ID token. Please verify Google Play Services."
+                    CrashDiagnostics.recordLog("AUTH", err)
+                    onError(err)
+                    return@launch
+                }
+
+                CrashDiagnostics.recordLog("AUTH", "Google ID token extracted. Authenticating with Firebase...")
+
+                val authCredential = GoogleAuthProvider.getCredential(idToken, null)
+                val authResult = fbAuth.signInWithCredential(authCredential).await()
+                val user = authResult.user ?: fbAuth.currentUser
+                if (user == null) {
+                    val err = "Firebase Authentication succeeded, but user session is null."
+                    CrashDiagnostics.recordLog("AUTH", err)
+                    onError(err)
+                    return@launch
+                }
+
+                val finalEmail = user.email ?: extractedEmail ?: ""
+                val finalName = user.displayName?.ifBlank { null }
+                    ?: extractedDisplayName?.ifBlank { null }
+                    ?: finalEmail.substringBefore("@").replaceFirstChar { it.uppercase() }
+                    .ifBlank { "Google User" }
+                val finalPhoto = user.photoUrl?.toString() ?: extractedPhotoUrl
+
+                val account = AuthAccount(
+                    uid = user.uid,
+                    email = finalEmail,
+                    displayName = finalName,
+                    isGoogle = true,
+                    photoUrl = finalPhoto
+                )
+
+                CrashDiagnostics.recordLog("AUTH", "Firebase Auth successful for $finalEmail (UID: ${user.uid})")
+                _currentUser.value = user
+                setAuthenticatedUser(account)
+                onSuccess(account)
+
+            } catch (e: GetCredentialCancellationException) {
+                Log.d("CloudSync", "Google Sign-In dismissed by user")
+                CrashDiagnostics.recordLog("AUTH", "Google Sign-In dismissed by user")
+                onCancel()
+            } catch (e: GetCredentialException) {
+                val errorMsg = e.message ?: ""
+                val errorType = e.type
+                val isFingerprintError = errorMsg.contains("16") ||
+                        errorMsg.contains("10") ||
+                        errorMsg.contains("Cannot find a matching credential", ignoreCase = true) ||
+                        errorMsg.contains("DEVELOPER_ERROR", ignoreCase = true)
+
+                val userFriendly = if (isFingerprintError) {
+                    "Google Sign-In configuration error: The app's SHA-1 signing fingerprint is not registered in Google Cloud / Firebase Console. Please register SHA-1 in Firebase Console for package 'com.aistudio.householdcfo.mpzkvq'."
+                } else {
+                    "Google Sign-In failed ($errorType): ${e.localizedMessage ?: "Unknown error"}"
+                }
+
+                Log.e("CloudSync", "CredentialManager error: type=$errorType msg=$errorMsg", e)
+                CrashDiagnostics.recordLog("AUTH", "CredentialManager failed: $errorType - $errorMsg", e)
+                onError(userFriendly)
+            } catch (e: com.google.firebase.auth.FirebaseAuthException) {
+                val code = e.errorCode
+                val userFriendly = "Firebase Authentication rejected credential (code: $code): ${e.localizedMessage}. Ensure the Google provider is enabled in Firebase Console."
+                Log.e("CloudSync", "Firebase Auth error: $code", e)
+                CrashDiagnostics.recordLog("AUTH", userFriendly, e)
+                onError(userFriendly)
+            } catch (e: com.google.firebase.FirebaseNetworkException) {
+                val userFriendly = "Network error connecting to Firebase Authentication. Please check your internet connection."
+                Log.e("CloudSync", "Firebase network error", e)
+                CrashDiagnostics.recordLog("AUTH", userFriendly, e)
+                onError(userFriendly)
+            } catch (e: Exception) {
+                val userFriendly = "Sign-in error: ${e.localizedMessage ?: e.javaClass.simpleName}"
+                Log.e("CloudSync", "Unexpected auth error", e)
+                CrashDiagnostics.recordLog("AUTH", userFriendly, e)
+                onError(userFriendly)
+            }
+        }
+    }
+
+    suspend fun findHouseholdForUser(uid: String, email: String): String? {
+        val db = firestore ?: return null
+        val cleanEmail = email.trim().lowercase()
+        try {
+            // 1. Check user_households by UID
+            if (uid.isNotBlank()) {
+                val doc = db.collection("user_households").document(uid).get().await()
+                if (doc.exists()) {
+                    val code = doc.getString("householdCode")
+                    if (!code.isNullOrBlank()) return code
+                }
+            }
+            // 2. Check user_households by sanitized email
+            if (cleanEmail.isNotBlank()) {
+                val sanitized = cleanEmail.replace(".", "_").replace("@", "_at_")
+                val emailDoc = db.collection("user_households").document(sanitized).get().await()
+                if (emailDoc.exists()) {
+                    val code = emailDoc.getString("householdCode")
+                    if (!code.isNullOrBlank()) return code
+                }
+            }
+            // 3. Check households by adminEmail (both lowercase and original)
+            if (cleanEmail.isNotBlank()) {
+                val queryLower = db.collection("households")
+                    .whereEqualTo("adminEmail", cleanEmail)
+                    .limit(1)
+                    .get().await()
+                if (!queryLower.isEmpty) {
+                    val hDoc = queryLower.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+                val queryOrig = db.collection("households")
+                    .whereEqualTo("adminEmail", email.trim())
+                    .limit(1)
+                    .get().await()
+                if (!queryOrig.isEmpty) {
+                    val hDoc = queryOrig.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+
+                // 4. Check households where memberEmails array contains user email
+                val queryMemberEmails = db.collection("households")
+                    .whereArrayContains("memberEmails", cleanEmail)
+                    .limit(1)
+                    .get().await()
+                if (!queryMemberEmails.isEmpty) {
+                    val hDoc = queryMemberEmails.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+            }
+            // 5. Check households where memberUids array contains user UID
+            if (uid.isNotBlank()) {
+                val queryMemberUids = db.collection("households")
+                    .whereArrayContains("memberUids", uid)
+                    .limit(1)
+                    .get().await()
+                if (!queryMemberUids.isEmpty) {
+                    val hDoc = queryMemberUids.documents.first()
+                    return hDoc.getString("inviteCode") ?: hDoc.id
+                }
+            }
+            // 6. Deep scan recent households' members subcollection as fallback
+            val recentHouseholds = db.collection("households").limit(10).get().await()
+            for (hDoc in recentHouseholds.documents) {
+                val hCode = hDoc.getString("inviteCode") ?: hDoc.id
+                val membersSub = hDoc.reference.collection("members")
+                if (uid.isNotBlank()) {
+                    val mUidDoc = membersSub.document(uid).get().await()
+                    if (mUidDoc.exists()) return hCode
+                }
+                if (cleanEmail.isNotBlank()) {
+                    val mEmailQuery = membersSub.whereEqualTo("email", cleanEmail).limit(1).get().await()
+                    if (!mEmailQuery.isEmpty) return hCode
+                    val mEmailQueryOrig = membersSub.whereEqualTo("email", email.trim()).limit(1).get().await()
+                    if (!mEmailQueryOrig.isEmpty) return hCode
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("CloudSync", "findHouseholdForUser query failed: ${e.message}")
+        }
+        return null
+    }
+
+    fun linkUserToHousehold(uid: String, email: String, householdCode: String, role: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val code = householdCode.trim().uppercase()
+        val cleanEmail = email.trim().lowercase()
+        scope.launch(Dispatchers.IO) {
+            try {
+                val data = mapOf(
+                    "householdCode" to code,
+                    "role" to role,
+                    "email" to cleanEmail,
+                    "uid" to uid,
+                    "linkedAt" to System.currentTimeMillis()
+                )
+                if (uid.isNotBlank()) {
+                    db.collection("user_households").document(uid).set(data, SetOptions.merge()).await()
+                }
+                if (cleanEmail.isNotBlank()) {
+                    val sanitized = cleanEmail.replace(".", "_").replace("@", "_at_")
+                    db.collection("user_households").document(sanitized).set(data, SetOptions.merge()).await()
+                }
+                val updates = mutableMapOf<String, Any>()
+                if (cleanEmail.isNotBlank()) {
+                    updates["memberEmails"] = com.google.firebase.firestore.FieldValue.arrayUnion(cleanEmail)
+                }
+                if (uid.isNotBlank()) {
+                    updates["memberUids"] = com.google.firebase.firestore.FieldValue.arrayUnion(uid)
+                }
+                if (updates.isNotEmpty()) {
+                    db.collection("households").document(code).set(updates, SetOptions.merge()).await()
+                }
+            } catch (e: Exception) {
+                Log.w("CloudSync", "linkUserToHousehold error: ${e.message}")
+            }
+        }
+    }
+
+    fun signOut(scope: CoroutineScope, onComplete: () -> Unit = {}) {
+        stopRealtimeSync()
+        authPrefs.edit().clear().apply()
+        try {
+            auth?.signOut()
+        } catch (e: Exception) {
+            Log.w("CloudSync", "Sign out error: ${e.message}")
         }
         _currentUser.value = null
         _authAccount.value = null
+        _syncState.value = SyncState.Idle
+        activeHouseholdCode = null
+        scope.launch {
+            try {
+                credentialManager?.clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: Exception) {
+                Log.w("CloudSync", "Failed to clear credential state", e)
+            } finally {
+                onComplete()
+            }
+        }
     }
 
-    fun startRealtimeSync(inviteCode: String, scope: CoroutineScope) {
-        val cleanCode = inviteCode.trim().uppercase()
-        if (cleanCode.isBlank() || activeHouseholdCode == cleanCode) return
+    /**
+     * Start live real-time sync listeners for a shared household
+     */
+    fun startRealtimeSync(householdCode: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val cleanCode = householdCode.trim().uppercase()
+        if (activeHouseholdCode == cleanCode && activeListeners.isNotEmpty()) return
 
         stopRealtimeSync()
         activeHouseholdCode = cleanCode
-        _syncState.value = _syncState.value.copy(isSyncing = true, isOnline = true, error = null)
+        _syncState.value = SyncState.Live(cleanCode)
 
         try {
-            // 1. Household Document Listener
-            val hSub = firestore.collection("households").document(cleanCode)
+            // 1. Listen to Household metadata & Budget Plan
+            val hSub = db.collection("households").document(cleanCode)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
                     scope.launch(Dispatchers.IO) {
-                        try {
-                            val name = snapshot.getString("name") ?: "Household"
-                            val adminName = snapshot.getString("adminName") ?: "Admin"
-                            val adminEmail = snapshot.getString("adminEmail") ?: ""
-                            val budget = snapshot.getDouble("monthlyDiscretionaryBudget") ?: 50000.0
-                            val pin = snapshot.getString("securityPin") ?: "1234"
-                            val existing = database.householdDao().getPrimaryHousehold()
-                            val updated = existing?.copy(
-                                name = name,
-                                inviteCode = cleanCode,
-                                adminName = adminName,
-                                adminEmail = adminEmail,
-                                monthlyDiscretionaryBudget = budget,
-                                securityPin = pin
-                            ) ?: HouseholdEntity(
-                                id = 1,
-                                name = name,
-                                inviteCode = cleanCode,
-                                adminName = adminName,
-                                adminEmail = adminEmail,
-                                monthlyDiscretionaryBudget = budget,
-                                securityPin = pin
+                        val name = snapshot.getString("name") ?: return@launch
+                        val budget = snapshot.getDouble("monthlyDiscretionaryBudget") ?: 30000.0
+                        val admin = snapshot.getString("adminName") ?: "Admin"
+                        val existing = database.householdDao().getPrimaryHousehold()
+                        if (existing != null) {
+                            database.householdDao().updateHousehold(
+                                existing.copy(
+                                    name = name,
+                                    monthlyDiscretionaryBudget = budget,
+                                    adminName = admin,
+                                    inviteCode = cleanCode,
+                                    isCloudSynced = true
+                                )
                             )
-                            database.householdDao().insertHousehold(updated)
-                        } catch (e: Exception) {
-                            Log.w("CloudSync", "Error updating household from cloud: ${e.message}")
+                        } else {
+                            database.householdDao().insertHousehold(
+                                HouseholdEntity(
+                                    id = 1L,
+                                    name = name,
+                                    currency = snapshot.getString("currency") ?: "INR",
+                                    monthlyDiscretionaryBudget = budget,
+                                    inviteCode = cleanCode,
+                                    adminName = admin,
+                                    adminEmail = snapshot.getString("adminEmail") ?: "",
+                                    securityPin = snapshot.getString("securityPin") ?: "1234",
+                                    isCloudSynced = true,
+                                    createdAt = snapshot.getLong("createdAt") ?: System.currentTimeMillis()
+                                )
+                            )
+                        }
+                        if (budget > 0) {
+                            val currentBudgets = database.budgetDao().getBudgets("").first()
+                            val sum = currentBudgets.sumOf { it.monthlyBudget }
+                            if (currentBudgets.isEmpty() || kotlin.math.abs(sum - budget) > 1.0) {
+                                val scaled = com.example.util.CategoryBudgetScaler.scaleBudgets(budget)
+                                database.budgetDao().insertBudgets(scaled)
+                            }
                         }
                     }
                 }
             activeListeners.add(hSub)
 
-            // 2. Members Subcollection Listener (SAFE MERGE - NEVER WIPE LOCAL MEMBERS)
-            val mSub = firestore.collection("households").document(cleanCode)
-                .collection("members")
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) return@addSnapshotListener
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            for (change in snapshot.documentChanges) {
-                                val doc = change.document
-                                val data = doc.data
-                                val name = data["name"] as? String ?: continue
-                                val email = (data["email"] as? String)?.trim() ?: ""
-                                val role = data["role"] as? String ?: "MEMBER"
-                                val colorHex = data["colorHex"] as? String ?: "#2563EB"
-                                val initial = data["initial"] as? String ?: name.take(1).uppercase()
-                                val photoUrl = data["photoUrl"] as? String
-                                val uid = data["uid"] as? String ?: doc.id
-
-                                when (change.type) {
-                                    DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                                        val existing = if (email.isNotBlank()) {
-                                            database.userDao().getUserByEmail(email)
-                                        } else {
-                                            database.userDao().getUserByName(name)
-                                        }
-                                        if (existing != null) {
-                                            val updated = existing.copy(
-                                                name = name,
-                                                email = if (email.isNotBlank()) email else existing.email,
-                                                role = role,
-                                                avatarInitial = initial,
-                                                colorHex = colorHex,
-                                                photoUrl = photoUrl ?: existing.photoUrl,
-                                                firebaseUid = uid.ifBlank { existing.firebaseUid }
-                                            )
-                                            database.userDao().updateUser(updated)
-                                        } else {
-                                            val newUser = UserEntity(
-                                                id = 0,
-                                                householdId = 1,
-                                                name = name,
-                                                email = email,
-                                                role = role,
-                                                avatarInitial = initial,
-                                                colorHex = colorHex,
-                                                photoUrl = photoUrl,
-                                                firebaseUid = uid
-                                            )
-                                            database.userDao().insertUser(newUser)
-                                        }
-                                    }
-                                    DocumentChange.Type.REMOVED -> {
-                                        // Only delete if specifically removed on remote
-                                        database.userDao().deleteUserByMatching(name, email, uid)
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.w("CloudSync", "Error updating members from cloud: ${e.message}")
-                        }
-                    }
-                }
-            activeListeners.add(mSub)
-
-            // 3. Transactions Subcollection Listener
-            val tSub = firestore.collection("households").document(cleanCode)
+            // 2. Listen to Transactions in real-time
+            val tSub = db.collection("households").document(cleanCode)
                 .collection("transactions")
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) return@addSnapshotListener
+                .addSnapshotListener { snapshots, error ->
+                    if (error != null || snapshots == null) return@addSnapshotListener
                     scope.launch(Dispatchers.IO) {
-                        try {
-                            for (change in snapshot.documentChanges) {
-                                val doc = change.document
-                                val idLong = doc.id.removePrefix("tx_").toLongOrNull() ?: continue
-                                val data = doc.data
-                                when (change.type) {
-                                    DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                                        val tx = TransactionEntity(
-                                            id = idLong,
-                                            householdId = 1,
-                                            userId = (data["userId"] as? Number)?.toLong(),
-                                            amount = (data["amount"] as? Number)?.toDouble() ?: 0.0,
-                                            category = data["category"] as? String ?: "General",
-                                            paidBy = data["paidBy"] as? String ?: "Admin",
-                                            paymentMethod = data["paymentMethod"] as? String ?: "UPI",
-                                            accountId = (data["accountId"] as? Number)?.toLong(),
-                                            toAccountId = (data["toAccountId"] as? Number)?.toLong(),
-                                            accountName = data["accountName"] as? String ?: "",
-                                            merchant = data["merchant"] as? String ?: "",
-                                            notes = data["notes"] as? String ?: "",
-                                            timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                                            monthYear = data["monthYear"] as? String ?: "2026-10",
-                                            nature = data["nature"] as? String ?: "DISCRETIONARY",
-                                            type = data["type"] as? String ?: "EXPENSE",
-                                            isRecurring = data["isRecurring"] as? Boolean ?: false,
-                                            recurringRuleId = (data["recurringRuleId"] as? Number)?.toLong()
-                                        )
-                                        database.transactionDao().insertTransaction(tx)
-                                    }
-                                    DocumentChange.Type.REMOVED -> {
-                                        database.transactionDao().deleteTransactionById(idLong)
-                                    }
+                        for (doc in snapshots.documentChanges) {
+                            val data = doc.document.data
+                            val id = (data["id"] as? String)?.toLongOrNull() ?: doc.document.id.removePrefix("tx_").toLongOrNull() ?: continue
+                            when (doc.type) {
+                                com.google.firebase.firestore.DocumentChange.Type.ADDED,
+                                com.google.firebase.firestore.DocumentChange.Type.MODIFIED -> {
+                                    val tx = TransactionEntity(
+                                        id = id,
+                                        householdId = 1L,
+                                        userId = (data["userId"] as? Number)?.toLong(),
+                                        amount = (data["amount"] as? Number)?.toDouble() ?: 0.0,
+                                        category = data["category"] as? String ?: "General",
+                                        paidBy = data["paidBy"] as? String ?: "PRATIK",
+                                        paymentMethod = data["paymentMethod"] as? String ?: "UPI",
+                                        accountId = (data["accountId"] as? Number)?.toLong(),
+                                        toAccountId = (data["toAccountId"] as? Number)?.toLong(),
+                                        accountName = data["accountName"] as? String ?: "",
+                                        merchant = data["merchant"] as? String ?: "",
+                                        notes = data["notes"] as? String ?: "",
+                                        timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                                        monthYear = data["monthYear"] as? String ?: "2026-10",
+                                        nature = data["nature"] as? String ?: "DISCRETIONARY",
+                                        type = data["type"] as? String ?: "EXPENSE",
+                                        isRecurring = data["isRecurring"] as? Boolean ?: false,
+                                        recurringRuleId = (data["recurringRuleId"] as? Number)?.toLong()
+                                    )
+                                    database.transactionDao().insertTransaction(tx)
+                                }
+                                com.google.firebase.firestore.DocumentChange.Type.REMOVED -> {
+                                    database.transactionDao().deleteTransactionById(id)
                                 }
                             }
-                            _syncState.value = _syncState.value.copy(isSyncing = false, lastSyncTime = System.currentTimeMillis())
-                        } catch (e: Exception) {
-                            Log.w("CloudSync", "Error updating transactions from cloud: ${e.message}")
                         }
                     }
                 }
             activeListeners.add(tSub)
 
-            // 4. Category Budgets Listener
-            val bSub = firestore.collection("households").document(cleanCode)
-                .collection("category_budgets")
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) return@addSnapshotListener
+            // 3. Listen to Members in real-time
+            val mSub = db.collection("households").document(cleanCode)
+                .collection("members")
+                .addSnapshotListener { snapshots, error ->
+                    if (error != null || snapshots == null) return@addSnapshotListener
                     scope.launch(Dispatchers.IO) {
-                        try {
-                            for (doc in snapshot.documents) {
-                                val catName = doc.getString("category") ?: continue
-                                val budget = doc.getDouble("monthlyBudget") ?: continue
-                                val isEssential = doc.getBoolean("isEssential") ?: false
-                                val colorHex = doc.getString("colorHex") ?: "#2563EB"
-                                val existingList = database.budgetDao().getAllBudgets()
-                                val match = existingList.firstOrNull { it.category.equals(catName, ignoreCase = true) }
-                                if (match != null) {
-                                    database.budgetDao().insertBudget(match.copy(monthlyBudget = budget, isEssential = isEssential, colorHex = colorHex))
-                                } else {
-                                    database.budgetDao().insertBudget(
-                                        CategoryBudgetEntity(householdId = 1, category = catName, monthlyBudget = budget, isEssential = isEssential, colorHex = colorHex)
+                        // 1. Process REMOVED document changes immediately
+                        for (change in snapshots.documentChanges) {
+                            if (change.type == com.google.firebase.firestore.DocumentChange.Type.REMOVED) {
+                                val data = change.document.data
+                                val remName = (data["name"] as? String)?.trim() ?: ""
+                                val remEmail = (data["email"] as? String)?.trim() ?: ""
+                                val remUid = (data["uid"] as? String) ?: change.document.id
+                                database.userDao().deleteUserByMatching(remName, remEmail, remUid)
+                            }
+                        }
+
+                        // 2. Track all cloud active members for full sync reconciliation
+                        val cloudNames = mutableSetOf<String>()
+                        val cloudEmails = mutableSetOf<String>()
+                        val cloudUids = mutableSetOf<String>()
+
+                        for (doc in snapshots.documents) {
+                            val data = doc.data ?: continue
+                            val name = (data["name"] as? String)?.trim() ?: continue
+                            if (name.isBlank()) continue
+                            val role = data["role"] as? String ?: "MEMBER"
+                            val colorHex = data["colorHex"] as? String ?: "#0D9488"
+                            val email = (data["email"] as? String)?.trim() ?: ""
+                            val initial = (data["initial"] as? String)?.ifBlank { null } ?: name.take(1).uppercase()
+                            val photoUrl = data["photoUrl"] as? String
+                            val docUid = (data["uid"] as? String)?.ifBlank { null }
+                                ?: doc.id.takeIf { !it.startsWith("user_") }
+
+                            cloudNames.add(name.lowercase())
+                            if (email.isNotBlank()) cloudEmails.add(email.lowercase())
+                            if (!docUid.isNullOrBlank()) cloudUids.add(docUid)
+
+                            val existing = (if (email.isNotBlank()) database.userDao().getUserByEmail(email) else null)
+                                ?: (if (!docUid.isNullOrBlank()) database.userDao().getUserByFirebaseUid(docUid) else null)
+                                ?: database.userDao().getUserByName(name)
+
+                            if (existing != null) {
+                                val updatedPhoto = if (!photoUrl.isNullOrBlank()) photoUrl else existing.photoUrl
+                                if (existing.role != role || (email.isNotBlank() && existing.email != email) || existing.colorHex != colorHex || existing.photoUrl != updatedPhoto || (docUid != null && existing.firebaseUid.isBlank())) {
+                                    database.userDao().updateUser(
+                                        existing.copy(
+                                            role = role,
+                                            email = if (email.isNotBlank()) email else existing.email,
+                                            colorHex = if (colorHex.isNotBlank()) colorHex else existing.colorHex,
+                                            initial = initial,
+                                            firebaseUid = if (!docUid.isNullOrBlank()) docUid else existing.firebaseUid,
+                                            photoUrl = updatedPhoto
+                                        )
                                     )
                                 }
+                            } else {
+                                database.userDao().insertUser(
+                                    UserEntity(
+                                        householdId = 1L,
+                                        name = name,
+                                        email = email,
+                                        role = role,
+                                        initial = initial,
+                                        colorHex = colorHex,
+                                        firebaseUid = docUid ?: "",
+                                        photoUrl = photoUrl
+                                    )
+                                )
                             }
-                        } catch (e: Exception) {
-                            Log.w("CloudSync", "Error updating budgets from cloud: ${e.message}")
+                        }
+
+                        // 3. Reconcile: If a local member is no longer in Firestore (and not primary household admin), remove from Room
+                        if (snapshots.documents.isNotEmpty()) {
+                            val allLocal = database.userDao().getAllUsers().first()
+                            val h = database.householdDao().getPrimaryHousehold()
+                            for (lu in allLocal) {
+                                val isPrimaryAdmin = h != null && (lu.name.equals(h.adminName, ignoreCase = true) ||
+                                        (h.adminEmail.isNotBlank() && lu.email.equals(h.adminEmail, ignoreCase = true)))
+                                if (!isPrimaryAdmin) {
+                                    val inCloud = cloudNames.contains(lu.name.lowercase()) ||
+                                            (lu.email.isNotBlank() && cloudEmails.contains(lu.email.lowercase())) ||
+                                            (lu.firebaseUid.isNotBlank() && cloudUids.contains(lu.firebaseUid))
+                                    if (!inCloud) {
+                                        database.userDao().deleteUser(lu.id)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            activeListeners.add(mSub)
+
+            // 4. Listen to Category Budgets in real-time
+            val bSub = db.collection("households").document(cleanCode)
+                .collection("category_budgets")
+                .addSnapshotListener { snapshots, error ->
+                    if (error != null || snapshots == null) return@addSnapshotListener
+                    scope.launch(Dispatchers.IO) {
+                        val budgets = snapshots.documents.mapNotNull { doc ->
+                            val cat = doc.getString("category") ?: doc.id
+                            val amt = doc.getDouble("budgetAmount") ?: doc.getDouble("monthlyBudget") ?: return@mapNotNull null
+                            CategoryBudgetEntity(category = cat, monthlyBudget = amt)
+                        }
+                        if (budgets.isNotEmpty()) {
+                            database.budgetDao().insertBudgets(budgets)
                         }
                     }
                 }
             activeListeners.add(bSub)
 
-            // 5. Accounts Listener
-            val aSub = firestore.collection("households").document(cleanCode)
+            // 5. Listen to Accounts in real-time
+            val aSub = db.collection("households").document(cleanCode)
                 .collection("accounts")
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) return@addSnapshotListener
+                .addSnapshotListener { snapshots, error ->
+                    if (error != null || snapshots == null) return@addSnapshotListener
                     scope.launch(Dispatchers.IO) {
-                        try {
-                            for (change in snapshot.documentChanges) {
-                                val doc = change.document
-                                val accId = doc.id.removePrefix("acc_").toLongOrNull() ?: continue
-                                val data = doc.data
-                                when (change.type) {
-                                    DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                                        val acc = AccountEntity(
-                                            id = accId,
-                                            householdId = 1,
-                                            name = data["name"] as? String ?: "Account",
-                                            type = data["type"] as? String ?: "BANK",
-                                            balance = (data["balance"] as? Number)?.toDouble() ?: 0.0,
-                                            creditLimit = (data["creditLimit"] as? Number)?.toDouble() ?: 0.0,
-                                            billingCycleDay = (data["billingCycleDay"] as? Number)?.toInt() ?: 1,
-                                            paymentDueDay = (data["paymentDueDay"] as? Number)?.toInt() ?: 20,
-                                            bankName = data["bankName"] as? String ?: "",
-                                            accountNumberLast4 = data["accountNumberLast4"] as? String ?: "",
-                                            colorHex = data["colorHex"] as? String ?: "#2563EB",
-                                            isPrimary = data["isPrimary"] as? Boolean ?: false,
-                                            notes = data["notes"] as? String ?: ""
-                                        )
-                                        database.accountDao().insertAccount(acc)
-                                    }
-                                    DocumentChange.Type.REMOVED -> {
-                                        database.accountDao().deleteAccount(accId)
-                                    }
+                        for (doc in snapshots.documentChanges) {
+                            val data = doc.document.data
+                            val id = (data["id"] as? String)?.toLongOrNull() ?: doc.document.id.removePrefix("acc_").toLongOrNull() ?: continue
+                            when (doc.type) {
+                                com.google.firebase.firestore.DocumentChange.Type.ADDED,
+                                com.google.firebase.firestore.DocumentChange.Type.MODIFIED -> {
+                                    val acc = AccountEntity(
+                                        id = id,
+                                        householdId = 1L,
+                                        userId = (data["userId"] as? Number)?.toLong(),
+                                        name = data["name"] as? String ?: "Account",
+                                        holder = data["holder"] as? String ?: "JOINT",
+                                        accountType = data["accountType"] as? String ?: "BANK",
+                                        balance = (data["balance"] as? Number)?.toDouble() ?: 0.0,
+                                        accountNumberMask = data["accountNumberMask"] as? String ?: "",
+                                        institution = data["institution"] as? String ?: "",
+                                        notes = data["notes"] as? String ?: "",
+                                        creditLimit = (data["creditLimit"] as? Number)?.toDouble() ?: 0.0
+                                    )
+                                    database.accountDao().insertAccount(acc)
+                                }
+                                com.google.firebase.firestore.DocumentChange.Type.REMOVED -> {
+                                    database.accountDao().deleteAccountById(id)
                                 }
                             }
-                        } catch (e: Exception) {
-                            Log.w("CloudSync", "Error updating accounts from cloud: ${e.message}")
                         }
                     }
                 }
@@ -388,7 +861,6 @@ class CloudSyncManager(
 
         } catch (e: Exception) {
             Log.e("CloudSync", "Failed to start realtime sync: ${e.message}", e)
-            _syncState.value = _syncState.value.copy(isSyncing = false, error = e.message)
         }
     }
 
@@ -398,187 +870,285 @@ class CloudSyncManager(
         activeHouseholdCode = null
     }
 
-    suspend fun findHouseholdForUser(uid: String?, email: String?): String? = withContext(Dispatchers.IO) {
-        try {
-            if (!uid.isNullOrBlank()) {
-                val doc = firestore.collection("user_households").document(uid).get().await()
-                if (doc.exists()) {
-                    val code = doc.getString("householdCode")
-                    if (!code.isNullOrBlank()) return@withContext code
-                }
-            }
-            if (!email.isNullOrBlank()) {
-                val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
-                val doc = firestore.collection("user_households").document(cleanEmail).get().await()
-                if (doc.exists()) {
-                    val code = doc.getString("householdCode")
-                    if (!code.isNullOrBlank()) return@withContext code
-                }
-                // Try admin query
-                val query = firestore.collection("households")
-                    .whereEqualTo("adminEmail", email.trim())
-                    .limit(1)
-                    .get().await()
-                if (!query.isEmpty) {
-                    val code = query.documents.first().getString("inviteCode")
-                    if (!code.isNullOrBlank()) return@withContext code
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("CloudSync", "findHouseholdForUser warning: ${e.message}")
-        }
-        null
-    }
-
+    /**
+     * Join an existing household via Invite Code
+     */
     fun joinHouseholdByCode(
         inviteCode: String,
         memberName: String,
         memberEmail: String = "",
         scope: CoroutineScope,
-        onResult: (Boolean, String?) -> Unit
+        onResult: (Boolean, String) -> Unit
     ) {
+        val db = firestore
+        if (db == null) {
+            onResult(false, "Cloud service is currently unavailable")
+            return
+        }
         val cleanCode = inviteCode.trim().uppercase()
+        if (cleanCode.isBlank()) {
+            onResult(false, "Please enter a valid invite code")
+            return
+        }
+
+        _syncState.value = SyncState.Syncing
+
         scope.launch(Dispatchers.IO) {
             try {
-                val doc = firestore.collection("households").document(cleanCode).get().await()
+                val doc = db.collection("households").document(cleanCode).get().await()
                 if (!doc.exists()) {
-                    withContext(Dispatchers.Main) { onResult(false, "Household code not found") }
+                    withContext(Dispatchers.Main) {
+                        _syncState.value = SyncState.Error("Household not found")
+                        onResult(false, "Household with code '$cleanCode' not found. Check with your admin.")
+                    }
                     return@launch
                 }
-                val householdName = doc.getString("name") ?: "Household"
-                val adminName = doc.getString("adminName") ?: "Admin"
-                val adminEmail = doc.getString("adminEmail") ?: ""
-                val budget = doc.getDouble("monthlyDiscretionaryBudget") ?: 50000.0
-                val pin = doc.getString("securityPin") ?: "1234"
 
-                val localHousehold = HouseholdEntity(
-                    id = 1,
+                val householdName = doc.getString("name") ?: "Shared Household"
+                val adminName = doc.getString("adminName") ?: "Admin"
+                val monthlyBudget = doc.getDouble("monthlyDiscretionaryBudget") ?: 66500.0
+
+                // 1. Update local household
+                val localH = HouseholdEntity(
+                    id = 1L,
                     name = householdName,
+                    currency = doc.getString("currency") ?: "INR",
+                    monthlyDiscretionaryBudget = monthlyBudget,
                     inviteCode = cleanCode,
                     adminName = adminName,
-                    adminEmail = adminEmail,
-                    monthlyDiscretionaryBudget = budget,
-                    securityPin = pin
+                    isCloudSynced = true
                 )
-                database.householdDao().insertHousehold(localHousehold)
+                database.householdDao().insertHousehold(localH)
 
-                // Add or match member locally
-                val existingUser = if (memberEmail.isNotBlank()) {
-                    database.userDao().getUserByEmail(memberEmail)
-                } else {
-                    database.userDao().getUserByName(memberName)
+                // 2. Register / Link user in household in Firestore (Deduplicate & preserve role)
+                val userUid = auth?.currentUser?.uid ?: "user_${System.currentTimeMillis()}"
+                val cleanEmail = memberEmail.trim().lowercase()
+                val isAdmin = adminName.equals(memberName.trim(), ignoreCase = true) ||
+                        (doc.getString("adminEmail")?.trim()?.equals(cleanEmail, ignoreCase = true) == true)
+
+                // Query all existing member docs in this household to check if user already exists
+                val allMemberDocs = db.collection("households").document(cleanCode)
+                    .collection("members").get().await()
+
+                val matchedDoc = allMemberDocs.documents.find { d ->
+                    val dUid = d.getString("uid") ?: d.id
+                    val dEmail = (d.getString("email") ?: "").trim().lowercase()
+                    val dName = (d.getString("name") ?: "").trim()
+                    (userUid.isNotBlank() && (dUid == userUid || d.id == userUid)) ||
+                    (cleanEmail.isNotBlank() && dEmail == cleanEmail) ||
+                    (dName.equals(memberName.trim(), ignoreCase = true))
                 }
-                val memberId = existingUser?.id ?: database.userDao().insertUser(
-                    UserEntity(
-                        id = 0,
-                        householdId = 1,
-                        name = memberName,
-                        email = memberEmail,
-                        role = "MEMBER",
-                        avatarInitial = memberName.take(1).uppercase(),
-                        colorHex = "#D97706"
+
+                val finalRole = when {
+                    isAdmin -> "ADMIN"
+                    matchedDoc != null -> matchedDoc.getString("role")?.takeIf { it.isNotBlank() } ?: "MEMBER"
+                    else -> "MEMBER"
+                }
+                val finalColor = matchedDoc?.getString("colorHex")?.takeIf { it.isNotBlank() } ?: "#0D9488"
+                val finalName = matchedDoc?.getString("name")?.takeIf { it.isNotBlank() } ?: memberName.trim()
+                val finalPhoto = auth?.currentUser?.photoUrl?.toString() ?: matchedDoc?.getString("photoUrl")
+
+                val memberMap = mapOf(
+                    "name" to finalName,
+                    "email" to memberEmail.trim(),
+                    "role" to finalRole,
+                    "colorHex" to finalColor,
+                    "initial" to finalName.take(1).uppercase(),
+                    "uid" to userUid,
+                    "photoUrl" to (finalPhoto ?: ""),
+                    "joinedAt" to (matchedDoc?.getLong("joinedAt") ?: System.currentTimeMillis())
+                )
+
+                val canonicalDocId = if (matchedDoc != null) matchedDoc.id else userUid
+                db.collection("households").document(cleanCode)
+                    .collection("members").document(canonicalDocId)
+                    .set(memberMap, SetOptions.merge()).await()
+
+                if (canonicalDocId != userUid && userUid.isNotBlank()) {
+                    db.collection("households").document(cleanCode)
+                        .collection("members").document(userUid)
+                        .set(memberMap, SetOptions.merge()).await()
+                }
+
+                // Delete any duplicate member documents in cloud for this same person
+                for (otherDoc in allMemberDocs.documents) {
+                    if (otherDoc.id != canonicalDocId && otherDoc.id != userUid) {
+                        val dEmail = (otherDoc.getString("email") ?: "").trim().lowercase()
+                        val dName = (otherDoc.getString("name") ?: "").trim()
+                        val dUid = otherDoc.getString("uid") ?: ""
+                        if ((cleanEmail.isNotBlank() && dEmail == cleanEmail) ||
+                            (dName.equals(finalName, ignoreCase = true)) ||
+                            (userUid.isNotBlank() && dUid == userUid)) {
+                            try { otherDoc.reference.delete().await() } catch (_: Exception) {}
+                        }
+                    }
+                }
+
+                // Upsert in local Room database (NEVER duplicate local records)
+                val existingLocal = (if (cleanEmail.isNotBlank()) database.userDao().getUserByEmail(cleanEmail) else null)
+                    ?: (if (userUid.isNotBlank()) database.userDao().getUserByFirebaseUid(userUid) else null)
+                    ?: database.userDao().getUserByName(finalName)
+
+                if (existingLocal != null) {
+                    database.userDao().updateUser(
+                        existingLocal.copy(
+                            name = finalName,
+                            email = memberEmail.trim(),
+                            role = finalRole,
+                            colorHex = finalColor,
+                            firebaseUid = userUid,
+                            photoUrl = finalPhoto ?: existingLocal.photoUrl
+                        )
                     )
-                )
-
-                // Push member to Cloud
-                val memberUser = database.userDao().getUserByIdSync(memberId)
-                if (memberUser != null) {
-                    pushMember(memberUser, cleanCode, scope)
+                } else {
+                    database.userDao().insertUser(
+                        UserEntity(
+                            householdId = 1L,
+                            name = finalName,
+                            email = memberEmail.trim(),
+                            role = finalRole,
+                            initial = finalName.take(1).uppercase(),
+                            colorHex = finalColor,
+                            firebaseUid = userUid,
+                            photoUrl = finalPhoto
+                        )
+                    )
                 }
 
-                // Link user to household in cloud
-                linkUserToHousehold(memberEmail, cleanCode)
+                // 3. Pull existing transactions from Firestore
+                val txDocs = db.collection("households").document(cleanCode)
+                    .collection("transactions").get().await()
+                val txList = txDocs.documents.mapNotNull { d ->
+                    val data = d.data ?: return@mapNotNull null
+                    val id = (data["id"] as? String)?.toLongOrNull() ?: d.id.removePrefix("tx_").toLongOrNull() ?: return@mapNotNull null
+                    TransactionEntity(
+                        id = id,
+                        householdId = 1L,
+                        userId = (data["userId"] as? Number)?.toLong(),
+                        amount = (data["amount"] as? Number)?.toDouble() ?: 0.0,
+                        category = data["category"] as? String ?: "General",
+                        paidBy = data["paidBy"] as? String ?: memberName,
+                        paymentMethod = data["paymentMethod"] as? String ?: "UPI",
+                        accountId = (data["accountId"] as? Number)?.toLong(),
+                        toAccountId = (data["toAccountId"] as? Number)?.toLong(),
+                        accountName = data["accountName"] as? String ?: "",
+                        merchant = data["merchant"] as? String ?: "",
+                        notes = data["notes"] as? String ?: "",
+                        timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                        monthYear = data["monthYear"] as? String ?: "2026-10",
+                        nature = data["nature"] as? String ?: "DISCRETIONARY",
+                        type = data["type"] as? String ?: "EXPENSE"
+                    )
+                }
+                if (txList.isNotEmpty()) {
+                    database.transactionDao().insertTransactions(txList)
+                }
 
+                // 4. Pull category budgets
+                val bDocs = db.collection("households").document(cleanCode)
+                    .collection("category_budgets").get().await()
+                val bList = bDocs.documents.mapNotNull { d ->
+                    val cat = d.getString("category") ?: d.id
+                    val amt = d.getDouble("budgetAmount") ?: d.getDouble("monthlyBudget") ?: return@mapNotNull null
+                    CategoryBudgetEntity(category = cat, monthlyBudget = amt)
+                }
+                if (bList.isNotEmpty()) {
+                    database.budgetDao().insertBudgets(bList)
+                } else {
+                    val scaled = CategoryBudgetScaler.scaleBudgets(monthlyBudget)
+                    database.budgetDao().insertBudgets(scaled)
+                }
+
+                linkUserToHousehold(userUid, memberEmail, cleanCode, "MEMBER", scope)
+
+                // 5. Start real-time sync
                 startRealtimeSync(cleanCode, scope)
-                withContext(Dispatchers.Main) { onResult(true, null) }
+
+                withContext(Dispatchers.Main) {
+                    _syncState.value = SyncState.Live(cleanCode)
+                    onResult(true, "Connected to $householdName! Live sync active.")
+                }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { onResult(false, e.message ?: "Failed to join") }
+                Log.e("CloudSync", "Join household error: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    _syncState.value = SyncState.Error(e.localizedMessage ?: "Failed to join")
+                    onResult(false, e.localizedMessage ?: "Failed to join household")
+                }
             }
         }
     }
 
-    private suspend fun linkUserToHousehold(email: String, code: String) {
-        try {
-            val user = auth.currentUser
-            if (user != null) {
-                firestore.collection("user_households").document(user.uid)
-                    .set(mapOf("householdCode" to code, "updatedAt" to System.currentTimeMillis()), SetOptions.merge()).await()
-            }
-            if (email.isNotBlank()) {
-                val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
-                firestore.collection("user_households").document(cleanEmail)
-                    .set(mapOf("householdCode" to code, "updatedAt" to System.currentTimeMillis()), SetOptions.merge()).await()
-            }
-        } catch (e: Exception) {
-            Log.w("CloudSync", "linkUserToHousehold warning: ${e.message}")
-        }
-    }
-
+    /**
+     * Create or publish local household to Cloud so partners can join
+     */
     fun publishHousehold(household: HouseholdEntity, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val code = household.inviteCode.ifBlank { "CFO-8821" }
         scope.launch(Dispatchers.IO) {
             try {
-                val code = household.inviteCode.trim().uppercase()
-                val map = mapOf(
+                val data = mapOf(
                     "name" to household.name,
+                    "currency" to household.currency,
+                    "monthlyDiscretionaryBudget" to household.monthlyDiscretionaryBudget,
                     "inviteCode" to code,
                     "adminName" to household.adminName,
-                    "adminEmail" to household.adminEmail,
-                    "monthlyDiscretionaryBudget" to household.monthlyDiscretionaryBudget,
-                    "securityPin" to household.securityPin,
-                    "updatedAt" to System.currentTimeMillis()
+                    "adminEmail" to (auth?.currentUser?.email ?: household.adminEmail),
+                    "createdAt" to household.createdAt
                 )
-                firestore.collection("households").document(code).set(map, SetOptions.merge()).await()
-                linkUserToHousehold(household.adminEmail, code)
+                db.collection("households").document(code).set(data, SetOptions.merge()).await()
+
+                // Upload members
+                val members = database.userDao().getAllUsers().first()
+                members.forEach { m ->
+                    val mMap = mapOf(
+                        "name" to m.name,
+                        "email" to m.email,
+                        "role" to m.role,
+                        "colorHex" to m.colorHex,
+                        "initial" to m.initial
+                    )
+                    db.collection("households").document(code)
+                        .collection("members").document("user_${m.id}")
+                        .set(mMap, SetOptions.merge())
+                }
+
+                // Upload budgets scaled accurately to the household's monthlyDiscretionaryBudget
+                val scaled = CategoryBudgetScaler.scaleBudgets(household.monthlyDiscretionaryBudget)
+                database.budgetDao().insertBudgets(scaled)
+                scaled.forEach { b ->
+                    db.collection("households").document(code)
+                        .collection("category_budgets").document(b.category)
+                        .set(mapOf("category" to b.category, "monthlyBudget" to b.monthlyBudget, "budgetAmount" to b.monthlyBudget), SetOptions.merge())
+                }
+
+                val adminUid = auth?.currentUser?.uid ?: "admin_local"
+                val adminEmail = auth?.currentUser?.email ?: household.adminEmail
+                linkUserToHousehold(adminUid, adminEmail, code, "ADMIN", scope)
+
                 startRealtimeSync(code, scope)
             } catch (e: Exception) {
-                Log.w("CloudSync", "publishHousehold warning: ${e.message}")
+                Log.w("CloudSync", "Publish household error: ${e.message}")
             }
         }
     }
 
-    fun pushMember(member: UserEntity, code: String, scope: CoroutineScope) {
+    /**
+     * Push a newly created/updated transaction to Cloud for immediate partner visibility
+     */
+    fun pushTransaction(tx: TransactionEntity, householdCode: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val code = householdCode.ifBlank { "CFO-8821" }
         scope.launch(Dispatchers.IO) {
             try {
-                val docId = if (member.email.isNotBlank()) {
-                    "user_" + member.email.trim().lowercase().replace(".", "_").replace("@", "_at_")
-                } else {
-                    "user_" + member.id
-                }
                 val map = mapOf(
-                    "name" to member.name,
-                    "email" to member.email,
-                    "role" to member.role,
-                    "colorHex" to member.colorHex,
-                    "initial" to member.initial,
-                    "photoUrl" to (member.photoUrl ?: ""),
-                    "uid" to (member.firebaseUid ?: ""),
-                    "joinedAt" to member.joinedAt
-                )
-                firestore.collection("households").document(code.uppercase())
-                    .collection("members").document(docId)
-                    .set(map, SetOptions.merge()).await()
-
-                if (member.email.isNotBlank()) {
-                    linkUserToHousehold(member.email, code)
-                }
-            } catch (e: Exception) {
-                Log.w("CloudSync", "pushMember warning: ${e.message}")
-            }
-        }
-    }
-
-    fun pushTransaction(tx: TransactionEntity, code: String, scope: CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                val docId = "tx_${tx.id}"
-                val map = mapOf(
-                    "userId" to (tx.userId ?: 0L),
+                    "id" to tx.id.toString(),
+                    "userId" to tx.userId,
                     "amount" to tx.amount,
                     "category" to tx.category,
                     "paidBy" to tx.paidBy,
                     "paymentMethod" to tx.paymentMethod,
-                    "accountId" to (tx.accountId ?: 0L),
-                    "toAccountId" to (tx.toAccountId ?: 0L),
+                    "accountId" to tx.accountId,
+                    "toAccountId" to tx.toAccountId,
                     "accountName" to tx.accountName,
                     "merchant" to tx.merchant,
                     "notes" to tx.notes,
@@ -587,86 +1157,316 @@ class CloudSyncManager(
                     "nature" to tx.nature,
                     "type" to tx.type,
                     "isRecurring" to tx.isRecurring,
-                    "recurringRuleId" to (tx.recurringRuleId ?: 0L)
+                    "recurringRuleId" to tx.recurringRuleId,
+                    "updatedAt" to System.currentTimeMillis()
                 )
-                firestore.collection("households").document(code.uppercase())
-                    .collection("transactions").document(docId)
+                db.collection("households").document(code)
+                    .collection("transactions").document("tx_${tx.id}")
                     .set(map, SetOptions.merge()).await()
             } catch (e: Exception) {
-                Log.w("CloudSync", "pushTransaction warning: ${e.message}")
+                Log.w("CloudSync", "Failed to push transaction: ${e.message}")
             }
         }
     }
 
-    fun deleteTransaction(txId: Long, code: String, scope: CoroutineScope) {
+    fun deleteTransaction(txId: Long, householdCode: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val code = householdCode.ifBlank { "CFO-8821" }
         scope.launch(Dispatchers.IO) {
             try {
-                firestore.collection("households").document(code.uppercase())
+                db.collection("households").document(code)
                     .collection("transactions").document("tx_$txId")
                     .delete().await()
             } catch (e: Exception) {
-                Log.w("CloudSync", "deleteTransaction warning: ${e.message}")
+                Log.w("CloudSync", "Failed to delete transaction from cloud: ${e.message}")
             }
         }
     }
 
-    fun pushAccount(account: AccountEntity, code: String, scope: CoroutineScope) {
+    /**
+     * Push household budget plan updates (Admin editable)
+     */
+    fun pushBudgetPlan(
+        householdCode: String,
+        monthlyBudget: Double,
+        categoryBudgets: List<CategoryBudgetEntity>,
+        scope: CoroutineScope
+    ) {
+        val db = firestore ?: return
+        val code = householdCode.ifBlank { "CFO-8821" }
         scope.launch(Dispatchers.IO) {
             try {
-                val docId = "acc_${account.id}"
-                val map = mapOf(
-                    "name" to account.name,
-                    "type" to account.type,
-                    "balance" to account.balance,
-                    "creditLimit" to account.creditLimit,
-                    "billingCycleDay" to account.billingCycleDay,
-                    "paymentDueDay" to account.paymentDueDay,
-                    "bankName" to account.bankName,
-                    "accountNumberLast4" to account.accountNumberLast4,
-                    "colorHex" to account.colorHex,
-                    "isPrimary" to account.isPrimary,
-                    "notes" to account.notes
-                )
-                firestore.collection("households").document(code.uppercase())
-                    .collection("accounts").document(docId)
-                    .set(map, SetOptions.merge()).await()
-            } catch (e: Exception) {
-                Log.w("CloudSync", "pushAccount warning: ${e.message}")
-            }
-        }
-    }
-
-    fun deleteAccount(accountId: Long, code: String, scope: CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                firestore.collection("households").document(code.uppercase())
-                    .collection("accounts").document("acc_$accountId")
-                    .delete().await()
-            } catch (e: Exception) {
-                Log.w("CloudSync", "deleteAccount warning: ${e.message}")
-            }
-        }
-    }
-
-    fun pushBudgetPlan(monthlyBudget: Double, categoryBudgets: Map<String, Double>, code: String, scope: CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                firestore.collection("households").document(code.uppercase())
-                    .set(mapOf("monthlyDiscretionaryBudget" to monthlyBudget), SetOptions.merge()).await()
-
-                val batch = firestore.batch()
-                categoryBudgets.forEach { (cat, amount) ->
-                    val docRef = firestore.collection("households").document(code.uppercase())
-                        .collection("category_budgets").document(cat)
-                    batch.set(docRef, mapOf(
-                        "category" to cat,
-                        "monthlyBudget" to amount,
-                        "colorHex" to CategoryConstants.getColorHex(cat)
-                    ), SetOptions.merge())
+                // Update household discretionary budget limit
+                db.collection("households").document(code).update("monthlyDiscretionaryBudget", monthlyBudget).await()
+                // Update category budgets
+                val batch = db.batch()
+                categoryBudgets.forEach { b ->
+                    val ref = db.collection("households").document(code)
+                        .collection("category_budgets").document(b.category)
+                    batch.set(ref, mapOf("category" to b.category, "monthlyBudget" to b.monthlyBudget, "budgetAmount" to b.monthlyBudget), SetOptions.merge())
                 }
                 batch.commit().await()
             } catch (e: Exception) {
-                Log.w("CloudSync", "pushBudgetPlan warning: ${e.message}")
+                Log.w("CloudSync", "Failed to push budget plan: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Push a newly added member
+     */
+    fun pushMember(member: UserEntity, householdCode: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val code = householdCode.ifBlank { "CFO-8821" }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val map = mapOf(
+                    "name" to member.name,
+                    "email" to member.email,
+                    "role" to member.role,
+                    "colorHex" to member.colorHex,
+                    "initial" to member.initial,
+                    "uid" to member.firebaseUid,
+                    "photoUrl" to (member.photoUrl ?: ""),
+                    "joinedAt" to System.currentTimeMillis()
+                )
+                db.collection("households").document(code)
+                    .collection("members").document("user_${member.id}")
+                    .set(map, SetOptions.merge()).await()
+
+                if (member.firebaseUid.isNotBlank()) {
+                    db.collection("households").document(code)
+                        .collection("members").document(member.firebaseUid)
+                        .set(map, SetOptions.merge()).await()
+                    db.collection("user_households").document(member.firebaseUid)
+                        .set(mapOf("role" to member.role), SetOptions.merge())
+                }
+
+                if (member.email.isNotBlank()) {
+                    val cleanEmail = member.email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+                    db.collection("households").document(code)
+                        .collection("members").document("user_${cleanEmail}")
+                        .set(map, SetOptions.merge()).await()
+                    db.collection("user_households").document(cleanEmail)
+                        .set(mapOf("role" to member.role), SetOptions.merge())
+                }
+            } catch (e: Exception) {
+                Log.w("CloudSync", "Failed to push member: ${e.message}")
+            }
+        }
+    }
+
+    fun pushAccount(account: AccountEntity, householdCode: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val code = householdCode.ifBlank { "CFO-8821" }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val map = mapOf(
+                    "id" to account.id.toString(),
+                    "name" to account.name,
+                    "holder" to account.holder,
+                    "accountType" to account.accountType,
+                    "balance" to account.balance,
+                    "accountNumberMask" to account.accountNumberMask,
+                    "institution" to account.institution,
+                    "notes" to account.notes,
+                    "creditLimit" to account.creditLimit,
+                    "userId" to account.userId,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+                db.collection("households").document(code)
+                    .collection("accounts").document("acc_${account.id}")
+                    .set(map, SetOptions.merge()).await()
+            } catch (e: Exception) {
+                Log.w("CloudSync", "Failed to push account: ${e.message}")
+            }
+        }
+    }
+
+    fun deleteAccount(accountId: Long, householdCode: String, scope: CoroutineScope) {
+        val db = firestore ?: return
+        val code = householdCode.ifBlank { "CFO-8821" }
+        scope.launch(Dispatchers.IO) {
+            try {
+                db.collection("households").document(code)
+                    .collection("accounts").document("acc_$accountId")
+                    .delete().await()
+            } catch (e: Exception) {
+                Log.w("CloudSync", "Failed to delete account from cloud: ${e.message}")
+            }
+        }
+    }
+
+    fun deleteMember(
+        userId: Long,
+        user: UserEntity? = null,
+        householdCode: String,
+        scope: CoroutineScope
+    ) {
+        val db = firestore ?: return
+        val code = householdCode.ifBlank { "CFO-8821" }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val batch = db.batch()
+                // 1. Delete standard user_$userId doc
+                val userRef = db.collection("households").document(code)
+                    .collection("members").document("user_$userId")
+                batch.delete(userRef)
+
+                // 2. Delete by firebaseUid if present
+                val uid = user?.firebaseUid?.takeIf { it.isNotBlank() }
+                if (uid != null) {
+                    val uidRef = db.collection("households").document(code)
+                        .collection("members").document(uid)
+                    batch.delete(uidRef)
+                    val userHRef = db.collection("user_households").document(uid)
+                    batch.delete(userHRef)
+                }
+
+                // 3. Delete by sanitized email if present
+                val email = user?.email?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                if (email != null) {
+                    val cleanEmail = email.replace(".", "_").replace("@", "_at_")
+                    val emailRef = db.collection("households").document(code)
+                        .collection("members").document("user_$cleanEmail")
+                    batch.delete(emailRef)
+                    val emailHRef = db.collection("user_households").document(cleanEmail)
+                    batch.delete(emailHRef)
+                }
+
+                batch.commit().await()
+
+                // 4. Also scan members subcollection to purge any duplicate docs matching this user
+                val membersDocs = db.collection("households").document(code)
+                    .collection("members").get().await()
+                for (doc in membersDocs.documents) {
+                    val dName = (doc.getString("name") ?: "").trim()
+                    val dEmail = (doc.getString("email") ?: "").trim().lowercase()
+                    val dUid = (doc.getString("uid") ?: "").trim()
+
+                    val nameMatches = user != null && dName.equals(user.name.trim(), ignoreCase = true)
+                    val emailMatches = email != null && dEmail == email
+                    val uidMatches = uid != null && dUid == uid
+
+                    if (nameMatches || emailMatches || uidMatches) {
+                        try {
+                            doc.reference.delete().await()
+                        } catch (e: Exception) {
+                            Log.w("CloudSync", "Purge duplicate member doc warning: ${e.message}")
+                        }
+                    }
+                }
+
+                // 5. Update household arrays so query doesn't find removed member
+                val updates = mutableMapOf<String, Any>()
+                if (email != null) {
+                    updates["memberEmails"] = com.google.firebase.firestore.FieldValue.arrayRemove(email)
+                }
+                if (uid != null) {
+                    updates["memberUids"] = com.google.firebase.firestore.FieldValue.arrayRemove(uid)
+                }
+                if (updates.isNotEmpty()) {
+                    db.collection("households").document(code).update(updates).await()
+                }
+            } catch (e: Exception) {
+                Log.w("CloudSync", "Failed to delete member from cloud: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Native Android Share Intent for household invite code and shareable link
+     */
+    fun shareHouseholdInvite(activityContext: Context, householdName: String, inviteCode: String) {
+        val shareText = """
+            🏡 Join our household "$householdName" on Household CFO!
+            
+            Use Household Invite Code: $inviteCode
+            
+            Link to see and track our family expenses, accounts, and budget plan together in real-time!
+        """.trimIndent()
+
+        val sendIntent = Intent().apply {
+            action = Intent.ACTION_SEND
+            putExtra(Intent.EXTRA_TEXT, shareText)
+            putExtra(Intent.EXTRA_SUBJECT, "Invite to join $householdName on Household CFO")
+            type = "text/plain"
+        }
+        val shareIntent = Intent.createChooser(sendIntent, "Share Household Invite Link")
+        activityContext.startActivity(shareIntent)
+    }
+
+    /**
+     * Backup all data to cloud manually
+     */
+    fun syncToCloud(scope: CoroutineScope) {
+        val user = auth?.currentUser
+        if (user == null) {
+            _syncState.value = SyncState.Error("Sign in required for cloud backup")
+            return
+        }
+        val db = firestore
+        if (db == null) {
+            _syncState.value = SyncState.Error("Firestore database unavailable")
+            return
+        }
+
+        _syncState.value = SyncState.Syncing
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                val household = database.householdDao().getPrimaryHousehold()
+                val code = household?.inviteCode?.ifBlank { "CFO-8821" } ?: "CFO-8821"
+                publishHousehold(household ?: HouseholdEntity(name = "Family Household"), scope)
+
+                val transactions = database.transactionDao().getAllTransactions().first()
+                val accounts = database.accountDao().getAllAccounts().first()
+
+                val batch = db.batch()
+
+                transactions.forEach { tx ->
+                    val docRef = db.collection("households").document(code)
+                        .collection("transactions").document("tx_${tx.id}")
+                    val map = mapOf(
+                        "id" to tx.id.toString(),
+                        "amount" to tx.amount,
+                        "category" to tx.category,
+                        "paidBy" to tx.paidBy,
+                        "paymentMethod" to tx.paymentMethod,
+                        "accountId" to tx.accountId,
+                        "accountName" to tx.accountName,
+                        "merchant" to tx.merchant,
+                        "notes" to tx.notes,
+                        "timestamp" to tx.timestamp,
+                        "monthYear" to tx.monthYear,
+                        "nature" to tx.nature,
+                        "type" to tx.type,
+                        "isRecurring" to tx.isRecurring,
+                        "syncUserId" to user.uid
+                    )
+                    batch.set(docRef, map, SetOptions.merge())
+                }
+
+                accounts.forEach { acc ->
+                    val docRef = db.collection("households").document(code)
+                        .collection("accounts").document("acc_${acc.id}")
+                    val map = mapOf(
+                        "id" to acc.id.toString(),
+                        "name" to acc.name,
+                        "holder" to acc.holder,
+                        "accountType" to acc.accountType,
+                        "balance" to acc.balance,
+                        "accountNumberMask" to acc.accountNumberMask,
+                        "syncUserId" to user.uid
+                    )
+                    batch.set(docRef, map, SetOptions.merge())
+                }
+
+                batch.commit().await()
+                _syncState.value = SyncState.Live(code)
+            } catch (e: Exception) {
+                Log.e("CloudSync", "Sync failed", e)
+                _syncState.value = SyncState.Error("Sync error: ${e.localizedMessage}")
             }
         }
     }

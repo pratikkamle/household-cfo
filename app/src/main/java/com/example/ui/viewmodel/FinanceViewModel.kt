@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.auth.FirebaseUser
 import com.example.data.local.AppDatabase
 import com.example.data.local.DatabaseInitializer
 import com.example.data.model.AccountEntity
@@ -1206,14 +1207,46 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    fun signInWithGoogle(activity: Activity) {
+    private val _isGoogleAuthLoading = MutableStateFlow(false)
+    val isGoogleAuthLoading: StateFlow<Boolean> = _isGoogleAuthLoading.asStateFlow()
+
+    private val _authErrorMessage = MutableStateFlow<String?>(null)
+    val authErrorMessage: StateFlow<String?> = _authErrorMessage.asStateFlow()
+
+    fun clearAuthError() {
+        _authErrorMessage.value = null
+    }
+
+    fun signInWithGoogle(
+        activity: Activity,
+        onResult: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
+        if (_isGoogleAuthLoading.value) return
+        _isGoogleAuthLoading.value = true
+        _authErrorMessage.value = null
+
         cloudSyncManager.signInWithGoogle(
             activity = activity,
             scope = viewModelScope,
             onSuccess = { account ->
+                _isGoogleAuthLoading.value = false
                 viewModelScope.launch {
-                    checkAndLoadHouseholdForUser(account)
+                    try {
+                        checkAndLoadHouseholdForUser(account)
+                    } catch (e: Exception) {
+                        android.util.Log.w("FinanceViewModel", "Household lookup deferred: ${e.message}")
+                    }
+                    onResult(true, null)
                 }
+            },
+            onCancel = {
+                _isGoogleAuthLoading.value = false
+                onResult(false, null)
+            },
+            onError = { error ->
+                _isGoogleAuthLoading.value = false
+                _authErrorMessage.value = error
+                onResult(false, error)
             }
         )
     }
@@ -1231,16 +1264,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun checkAndRestoreCloudHousehold(onResult: ((Boolean) -> Unit)? = null) {
-        val account = authAccount.value ?: cloudSyncManager.currentUser.value?.let {
+        val fbUser = cloudSyncManager.currentUser.value
+        val fallbackAccount = if (fbUser != null) {
             AuthAccount(
-                uid = it.uid,
-                email = it.email ?: "",
-                displayName = it.displayName ?: (it.email?.substringBefore("@")?.replaceFirstChar { c -> c.uppercase() } ?: "User"),
-                isGoogle = it.providerData.any { p -> p.providerId == "google.com" },
-                photoUrl = it.photoUrl?.toString()
+                uid = fbUser.uid,
+                email = fbUser.email ?: "",
+                displayName = fbUser.displayName ?: (fbUser.email?.substringBefore("@")?.replaceFirstChar { c -> c.uppercase() } ?: "User"),
+                isGoogle = fbUser.providerData.any { p -> p.providerId == "google.com" },
+                photoUrl = fbUser.photoUrl?.toString()
             )
+        } else null
+        val account: AuthAccount = authAccount.value ?: fallbackAccount ?: run {
+            onResult?.invoke(false)
+            return
         }
-        if (account == null || (account.uid.isBlank() && account.email.isBlank())) {
+        if (account.uid.isBlank() && account.email.isBlank()) {
             onResult?.invoke(false)
             return
         }
@@ -1288,6 +1326,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 }
                 return
             }
+        } catch (t: Throwable) {
+            android.util.Log.w("FinanceViewModel", "checkAndLoadHouseholdForUser warning: ${t.message}")
+            com.example.ui.components.CrashDiagnostics.recordLog("AUTH", "Household lookup deferred: ${t.message}", t)
         } finally {
             _isCheckingCloudHousehold.value = false
         }

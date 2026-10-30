@@ -275,7 +275,7 @@ fun SmartDetectDialog(
                             }
                         }
                     } else {
-                        capturedNotifications.forEach { item ->
+                        for (item in capturedNotifications) {
                             val parsed = item.parsedTransaction
                             Card(
                                 shape = RoundedCornerShape(14.dp),

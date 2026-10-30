@@ -2,36 +2,41 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val NavyDark = Color(0xFF0A192F)
-val NavyCard = Color(0xFF112240)
-val NavySurface = Color(0xFF1E293B)
-val NavyLight = Color(0xFF233554)
+// Household CFO Palette: Luxury Slate & Emerald with Ocean Teal & Rose Pink accents
+val Emerald900 = Color(0xFF064E3B)
+val Emerald700 = Color(0xFF047857)
+val Emerald600 = Color(0xFF059669)
+val Emerald500 = Color(0xFF10B981)
+val Emerald400 = Color(0xFF34D399)
+val Emerald100 = Color(0xFFD1FAE5)
 
-val EmeraldGreen = Color(0xFF00E676)
-val EmeraldLight = Color(0xFF69F0AE)
-val EmeraldDark = Color(0xFF00B0FF)
+val Slate950 = Color(0xFF020617)
+val Slate900 = Color(0xFF0F172A)
+val Slate800 = Color(0xFF1E293B)
+val Slate700 = Color(0xFF334155)
+val Slate600 = Color(0xFF475569)
+val Slate400 = Color(0xFF94A3B8)
+val Slate200 = Color(0xFFE2E8F0)
+val Slate100 = Color(0xFFF1F5F9)
+val Slate50 = Color(0xFFF8FAFC)
 
-val GoldAccent = Color(0xFFFFD54F)
-val CoralRed = Color(0xFFFF5252)
-val CyanAccent = Color(0xFF64FFDA)
-val PurpleAccent = Color(0xFFBA68C8)
+// Member Accent Colors
+val OceanTeal = Color(0xFF0284C7)      // Ocean Teal Blue
+val OceanTealLight = Color(0xFFBAE6FD)
+val RosePink = Color(0xFFE11D48)       // Rich Rose Pink
+val RosePinkLight = Color(0xFFFECDD3)
+val JointPurple = Color(0xFF7C3AED)     // Regal Violet
+val JointPurpleLight = Color(0xFFDDD6FE)
 
-val TextPrimary = Color(0xFFF8FAFC)
-val TextSecondary = Color(0xFF94A3B8)
-val TextMuted = Color(0xFF64748B)
+// Financial Metrics Colors
+val IncomeGreen = Color(0xFF059669)     // 🟢 Income
+val IncomeGreenLight = Color(0xFFD1FAE5)
+val ExpenseRed = Color(0xFFDC2626)      // 🔴 Expense
+val ExpenseRedLight = Color(0xFFFEE2E2)
+val InvestmentBlue = Color(0xFF2563EB)  // 🔵 Investment
+val InvestmentBlueLight = Color(0xFFDBEAFE)
+val UpcomingOrange = Color(0xFFD97706)  // 🟠 Upcoming
+val UpcomingOrangeLight = Color(0xFFFEF3C7)
 
-val CategoryColors = listOf(
-    Color(0xFF3F51B5), // Housing
-    Color(0xFFFF9800), // Utilities
-    Color(0xFF4CAF50), // Groceries
-    Color(0xFFE91E63), // Dining
-    Color(0xFF00BCD4), // Transportation
-    Color(0xFF9C27B0), // Entertainment
-    Color(0xFFF44336), // Healthcare
-    Color(0xFFFF5722), // Shopping
-    Color(0xFFE040FB), // Personal Care
-    Color(0xFF607D8B), // Education
-    Color(0xFF009688), // Investment
-    Color(0xFF2E7D32), // Salary
-    Color(0xFF795548)  // Misc
-)
+val GoldAccent = Color(0xFFF59E0B)
+val GoldAccentLight = Color(0xFFFEF3C7)

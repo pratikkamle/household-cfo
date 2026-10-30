@@ -1,56 +1,95 @@
 package com.example.ui.theme
 
-import android.app.Activity
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 private val DarkColorScheme = darkColorScheme(
-    primary = EmeraldGreen,
-    onPrimary = NavyDark,
-    primaryContainer = NavyLight,
-    onPrimaryContainer = EmeraldLight,
-    secondary = CyanAccent,
-    onSecondary = NavyDark,
-    secondaryContainer = NavyCard,
-    onSecondaryContainer = CyanAccent,
-    tertiary = GoldAccent,
-    background = NavyDark,
-    onBackground = TextPrimary,
-    surface = NavyCard,
-    onSurface = TextPrimary,
-    surfaceVariant = NavySurface,
-    onSurfaceVariant = TextSecondary,
-    error = CoralRed,
-    outline = NavyLight
+    primary = Emerald400,
+    onPrimary = Slate950,
+    primaryContainer = Emerald900,
+    onPrimaryContainer = Emerald100,
+    secondary = OceanTeal,
+    onSecondary = Color.White,
+    secondaryContainer = Slate800,
+    onSecondaryContainer = Slate200,
+    tertiary = RosePink,
+    onTertiary = Color.White,
+    tertiaryContainer = Slate800,
+    onTertiaryContainer = RosePinkLight,
+    background = Slate950,
+    onBackground = Slate50,
+    surface = Slate900,
+    onSurface = Slate50,
+    surfaceVariant = Slate800,
+    onSurfaceVariant = Slate400,
+    outline = Slate700,
+    outlineVariant = Slate800
+)
+
+private val LightColorScheme = lightColorScheme(
+    primary = Emerald700,
+    onPrimary = Color.White,
+    primaryContainer = Emerald100,
+    onPrimaryContainer = Emerald900,
+    secondary = OceanTeal,
+    onSecondary = Color.White,
+    secondaryContainer = OceanTealLight,
+    onSecondaryContainer = Slate900,
+    tertiary = RosePink,
+    onTertiary = Color.White,
+    tertiaryContainer = RosePinkLight,
+    onTertiaryContainer = Slate900,
+    background = Slate50,
+    onBackground = Slate900,
+    surface = Color.White,
+    onSurface = Slate900,
+    surfaceVariant = Slate100,
+    onSurfaceVariant = Slate600,
+    outline = Slate200,
+    outlineVariant = Slate100
 )
 
 @Composable
-fun HouseholdCFOTheme(
-    darkTheme: Boolean = true, // Executive dark CFO theme as primary
+fun HouseholdCfoTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = false, // Keep distinct custom financial branding
     content: @Composable () -> Unit
 ) {
-    val colorScheme = DarkColorScheme
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as? Activity)?.window
-            if (window != null) {
-                window.statusBarColor = NavyDark.toArgb()
-                window.navigationBarColor = NavyDark.toArgb()
-                WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
-            }
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
+        darkTheme -> DarkColorScheme
+        else -> LightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
+    // Oppo/ColorOS devices often apply aggressive display scaling / font scaling (>1.15x)
+    // which causes financial dashboard metrics and navigation labels to look bulky and wrap letters onto new lines.
+    // Clamping the fontScale gently to 1.05f ensures a sleek, clean, compact aesthetic (matching Nothing OS)
+    // while preserving comfortable legibility and accessibility.
+    val currentDensity = LocalDensity.current
+    val clampedDensity = Density(
+        density = currentDensity.density,
+        fontScale = currentDensity.fontScale.coerceIn(0.85f, 1.0f)
     )
+
+    CompositionLocalProvider(LocalDensity provides clampedDensity) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
 }

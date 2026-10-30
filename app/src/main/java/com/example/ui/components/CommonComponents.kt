@@ -1,208 +1,389 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.CarRental
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Checkroom
+import androidx.compose.material.icons.filled.Commute
+import androidx.compose.material.icons.filled.Flight
+import androidx.compose.material.icons.filled.Handyman
+import androidx.compose.material.icons.filled.HealthAndSafety
+import androidx.compose.material.icons.filled.LocalDining
+import androidx.compose.material.icons.filled.LocalGasStation
+import androidx.compose.material.icons.filled.LocalHospital
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.SelfImprovement
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.Subscriptions
+import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.model.TransactionEntity
-import com.example.data.model.UserEntity
-import com.example.ui.theme.*
-import com.example.util.CurrencyFormatter
-import java.text.SimpleDateFormat
-import java.util.*
+import com.example.data.model.CategoryConstants
+import com.example.data.model.HouseholdMember
+import com.example.data.model.MemberColorPalette
+import com.example.data.model.MemberProfile
+import com.example.data.model.parseHexColor
+import com.example.ui.theme.JointPurple
+import com.example.ui.theme.OceanTeal
+import com.example.ui.theme.OceanTealLight
 
 @Composable
-fun SensitiveText(
-    amount: Double,
-    isRevealed: Boolean,
+fun MemberBadge(
+    memberId: String,
     modifier: Modifier = Modifier,
-    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.titleLarge,
-    color: Color = MaterialTheme.colorScheme.onSurface,
-    showSign: Boolean = false
+    size: Int = 24
 ) {
-    Text(
-        text = CurrencyFormatter.formatInr(amount, showSign = showSign, obscure = !isRevealed),
-        style = style,
-        color = color,
-        modifier = modifier
-    )
-}
+    val clean = memberId.trim().uppercase()
+    val (color, displayName, initial) = when (clean) {
+        "JOINT" -> Triple(JointPurple, "Joint", "J")
+        else -> {
+            val hash = Math.abs(clean.hashCode()) % MemberColorPalette.size
+            val c = parseHexColor(MemberColorPalette[hash].first, OceanTeal)
+            Triple(c, memberId.replaceFirstChar { it.uppercase() }, memberId.take(1).uppercase())
+        }
+    }
 
-@Composable
-fun UserAvatar(
-    name: String,
-    initial: String,
-    colorHex: String,
-    modifier: Modifier = Modifier,
-    size: Int = 36
-) {
-    val bg = runCatching { Color(android.graphics.Color.parseColor(colorHex)) }.getOrDefault(PrimaryBlue)
-    Box(
+    Row(
         modifier = modifier
-            .size(size.dp)
-            .clip(CircleShape)
-            .background(bg),
-        contentAlignment = Alignment.Center
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.15f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        Box(
+            modifier = Modifier
+                .size(maxOf(14.dp, (size - 10).dp))
+                .clip(CircleShape)
+                .background(color),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = initial,
+                color = Color.White,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
         Text(
-            text = initial.take(1).uppercase(),
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = (size * 0.42).sp
+            text = displayName,
+            color = color,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }
 
 @Composable
-fun StatMetricCard(
-    title: String,
-    amount: Double,
-    isRevealed: Boolean,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    color: Color,
+fun CategoryIconBadge(
+    category: String,
     modifier: Modifier = Modifier,
-    subtitle: String? = null
+    size: androidx.compose.ui.unit.Dp = 40.dp
 ) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    val icon = getCategoryIcon(category)
+    val color = getCategoryColor(category)
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.15f)),
+        contentAlignment = Alignment.Center
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = category,
+            tint = color,
+            modifier = Modifier.size(size * 0.55f)
+        )
+    }
+}
+
+@Composable
+fun CategoryIconBadge(
+    categoryName: String,
+    modifier: Modifier = Modifier,
+    size: Int = 40
+) = CategoryIconBadge(category = categoryName, modifier = modifier, size = size.dp)
+
+@Composable
+fun MonthSelectorHeader(
+    displayMonth: String,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Box(
+                IconButton(
+                    onClick = onPrevious,
                     modifier = Modifier
                         .size(32.dp)
-                        .clip(CircleShape)
-                        .background(color.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
+                        .testTag("btn_prev_month")
                 ) {
                     Icon(
-                        imageVector = icon,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Previous Month",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarMonth,
                         contentDescription = null,
-                        tint = color,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = displayMonth,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                IconButton(
+                    onClick = onNext,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .testTag("btn_next_month")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Next Month",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            SensitiveText(
-                amount = amount,
-                isRevealed = isRevealed,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = color
+        }
+    }
+}
+
+fun getCategoryIcon(category: String): ImageVector {
+    return when (category.lowercase()) {
+        "food & dining", "dining", "restaurants", "swiggy", "zomato" -> Icons.Default.LocalDining
+        "groceries", "supermarket", "blinkit", "zepto" -> Icons.Default.ShoppingCart
+        "shopping", "clothing", "myntra", "amazon" -> Icons.Default.Checkroom
+        "fuel & travel", "fuel", "petrol", "uber", "ola" -> Icons.Default.LocalGasStation
+        "travel & holidays", "flights", "hotels" -> Icons.Default.Flight
+        "entertainment", "movies", "netflix", "spotify" -> Icons.Default.Movie
+        "utilities & bills", "electricity", "broadband", "mobile" -> Icons.Default.Receipt
+        "medical & healthcare", "pharmacy", "doctor" -> Icons.Default.LocalHospital
+        "personal care", "salon", "grooming" -> Icons.Default.SelfImprovement
+        "fitness & gym", "cult" -> Icons.AutoMirrored.Filled.DirectionsRun
+        "insurance & lic", "lic", "car insurance", "health insurance" -> Icons.Default.Shield
+        "emi & loans", "home loan", "car loan" -> Icons.Default.CarRental
+        "investments & sip", "sip", "mutual funds", "zerodha" -> Icons.Default.TrendingUp
+        "subscriptions" -> Icons.Default.Subscriptions
+        "home maintenance", "maid", "cook" -> Icons.Default.Handyman
+        "education", "courses" -> Icons.Default.School
+        "gifts & donations" -> Icons.Default.CardGiftcard
+        "car commute" -> Icons.Default.Commute
+        else -> Icons.Default.Category
+    }
+}
+
+fun getCategoryColor(category: String): Color {
+    return when (category.lowercase()) {
+        "food & dining" -> Color(0xFFF97316)
+        "groceries" -> Color(0xFF10B981)
+        "shopping" -> Color(0xFFEC4899)
+        "fuel & travel" -> Color(0xFFEAB308)
+        "travel & holidays" -> Color(0xFF06B6D4)
+        "entertainment" -> Color(0xFF8B5CF6)
+        "utilities & bills" -> Color(0xFF64748B)
+        "medical & healthcare" -> Color(0xFFEF4444)
+        "personal care" -> Color(0xFFD946EF)
+        "fitness & gym" -> Color(0xFF14B8A6)
+        "insurance & lic" -> Color(0xFF3B82F6)
+        "emi & loans" -> Color(0xFF6366F1)
+        "investments & sip" -> Color(0xFF059669)
+        "subscriptions" -> Color(0xFFA855F7)
+        "home maintenance" -> Color(0xFF78716C)
+        else -> Color(0xFF6B7280)
+    }
+}
+
+/**
+ * Generalized Member Filter Row supporting 1, 2, 3, 4+ household members and Joint
+ */
+@Composable
+fun MemberFilterRow(
+    members: List<MemberProfile> = emptyList(),
+    selectedMemberName: String? = null,
+    onMemberNameSelected: (String?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val displayMembers = remember(members) {
+        members
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = selectedMemberName == null,
+            onClick = { onMemberNameSelected(null) },
+            label = { Text("All Household") },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+            },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ),
+            modifier = Modifier.testTag("filter_all_household")
+        )
+
+        displayMembers.forEach { member ->
+            val isSelected = selectedMemberName.equals(member.displayName, ignoreCase = true) ||
+                             selectedMemberName.equals(member.id, ignoreCase = true)
+            FilterChip(
+                selected = isSelected,
+                onClick = { onMemberNameSelected(member.displayName) },
+                label = { Text(member.displayName) },
+                leadingIcon = {
+                    UserAvatar(
+                        name = member.displayName,
+                        photoUrl = member.photoUrl,
+                        size = 18.dp,
+                        backgroundColor = member.color,
+                        fontSize = 9.sp
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = member.color.copy(alpha = 0.2f),
+                    selectedLabelColor = member.color
+                ),
+                modifier = Modifier.testTag("filter_${member.displayName.lowercase()}")
             )
-            if (subtitle != null) {
-                Spacer(modifier = Modifier.height(4.dp))
+        }
+    }
+}
+
+/**
+ * Universal UserAvatar component supporting Gmail / Google profile image
+ * with automatic fallback to high-contrast initial badge
+ */
+@Composable
+fun UserAvatar(
+    name: String,
+    photoUrl: String? = null,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+    backgroundColor: Color = MaterialTheme.colorScheme.primary,
+    fontSize: TextUnit = 16.sp
+) {
+    Surface(
+        shape = CircleShape,
+        color = backgroundColor,
+        modifier = modifier.size(size)
+    ) {
+        if (!photoUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = photoUrl,
+                contentDescription = name,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(contentAlignment = Alignment.Center) {
                 Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = name.trim().take(1).uppercase().ifBlank { "C" },
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = fontSize
                 )
             }
         }
     }
 }
 
+// Backward-compatible overload for HouseholdMember
 @Composable
-fun TransactionRowItem(
-    tx: TransactionEntity,
-    isRevealed: Boolean,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
+fun MemberFilterRow(
+    selectedMember: HouseholdMember?,
+    onMemberSelected: (HouseholdMember?) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isExpense = tx.type == "EXPENSE"
-    val color = if (isExpense) ExpenseRed else IncomeGreen
-    val sdf = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
-    val dateStr = remember(tx.timestamp) { sdf.format(Date(tx.timestamp)) }
-
-    Card(
+    MemberFilterRow(
+        members = emptyList(),
+        selectedMemberName = selectedMember?.name,
+        onMemberNameSelected = { name ->
+            onMemberSelected(if (name == null) null else HouseholdMember.fromId(name))
+        },
         modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .testTag("transaction_row_${tx.id}"),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(color.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isExpense) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
-                    contentDescription = null,
-                    tint = color,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = tx.merchant.ifBlank { tx.category },
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "${tx.category} • ${tx.paidBy} • $dateStr",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                SensitiveText(
-                    amount = tx.amount,
-                    isRevealed = isRevealed,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                    color = color,
-                    showSign = !isExpense
-                )
-                Text(
-                    text = tx.paymentMethod,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
+    )
 }

@@ -1,10 +1,10 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,338 +14,339 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.example.data.model.ExpenseCategory
-import com.example.data.model.Transaction
-import com.example.data.model.TransactionType
-import com.example.ui.components.AppIcons
-import com.example.ui.components.MonthSelectorSlider
-import com.example.ui.viewmodel.HouseholdCfoViewModel
-import com.example.util.SmartDetector
+import androidx.compose.ui.unit.sp
+import com.example.data.model.AccountEntity
+import com.example.data.model.MemberProfile
+import com.example.data.model.TransactionEntity
+import com.example.data.model.UserRole
+import com.example.ui.screens.EditTransactionDialog
+import com.example.ui.theme.ExpenseRed
+import com.example.util.CurrencyFormatter
+import kotlin.math.ceil
 
 @Composable
 fun TransactionsScreen(
-    viewModel: HouseholdCfoViewModel,
+    transactions: List<TransactionEntity>,
+    onOpenAddExpense: () -> Unit,
+    onDeleteTransaction: (TransactionEntity) -> Unit,
+    currentUserRole: UserRole = UserRole.ADMIN,
+    accounts: List<AccountEntity> = emptyList(),
+    members: List<MemberProfile> = emptyList(),
+    onUpdateTransaction: (TransactionEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val selectedMonth by viewModel.selectedMonthIndex.collectAsState()
-    val transactions by viewModel.currentMonthTransactions.collectAsState()
-
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCategoryFilter by remember { mutableStateOf<ExpenseCategory?>(null) }
-    var showAddDialog by remember { mutableStateOf(false) }
+    var selectedTypeFilter by remember { mutableStateOf("ALL") } // "ALL", "EXPENSE", "INCOME"
+    var transactionToDelete by remember { mutableStateOf<TransactionEntity?>(null) }
+    var transactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
+    var currentPage by remember { mutableIntStateOf(0) }
+    val pageSize = 12
 
-    val filteredTransactions = transactions.filter { tx ->
-        val matchesSearch = tx.title.contains(searchQuery, ignoreCase = true) ||
-                tx.notes.contains(searchQuery, ignoreCase = true) ||
-                tx.category.displayName.contains(searchQuery, ignoreCase = true)
-        val matchesCategory = selectedCategoryFilter == null || tx.category == selectedCategoryFilter
-        matchesSearch && matchesCategory
+    val filtered = remember(transactions, searchQuery, selectedTypeFilter) {
+        transactions.filter { tx ->
+            val matchesType = when (selectedTypeFilter) {
+                "EXPENSE" -> tx.type == "EXPENSE"
+                "INCOME" -> tx.type == "INCOME"
+                else -> true
+            }
+            val q = searchQuery.trim().lowercase()
+            val matchesSearch = q.isEmpty() ||
+                tx.merchant.lowercase().contains(q) ||
+                tx.category.lowercase().contains(q) ||
+                tx.paidBy.lowercase().contains(q) ||
+                tx.notes.lowercase().contains(q)
+
+            matchesType && matchesSearch
+        }
     }
 
-    Scaffold(
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier
-                    .padding(bottom = 64.dp)
-                    .testTag("add_transaction_fab")
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Transaction")
-            }
-        },
-        modifier = modifier.fillMaxSize()
-    ) { paddingVals ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingVals)
-                .padding(horizontal = 16.dp)
-                .testTag("transactions_screen"),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                MonthSelectorSlider(
-                    currentMonthIndex = selectedMonth,
-                    onMonthChanged = { viewModel.setMonth(it) }
-                )
-            }
+    val totalPages = remember(filtered) { maxOf(1, ceil(filtered.size / pageSize.toDouble()).toInt()) }
+    if (currentPage >= totalPages) {
+        currentPage = maxOf(0, totalPages - 1)
+    }
 
-            // Search Bar
-            item {
+    val paged = remember(filtered, currentPage) {
+        filtered.drop(currentPage * pageSize).take(pageSize)
+    }
+
+    val totalExpense = remember(filtered) {
+        filtered.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+    }
+    val totalIncome = remember(filtered) {
+        filtered.filter { it.type == "INCOME" }.sumOf { it.amount }
+    }
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("transactions_screen"),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Top Header
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Transactions Management",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Detailed audit trail, search & filtering",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (currentUserRole.canAddTransactions) {
+                    Button(
+                        onClick = onOpenAddExpense,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.height(38.dp).testTag("tx_screen_add_btn")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Summary Bar Card
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Filtered Count", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${filtered.size} records", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    }
+                    Column {
+                        Text("Total Spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(CurrencyFormatter.formatInr(totalExpense), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = ExpenseRed)
+                    }
+                    Column {
+                        Text("Total Income", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(CurrencyFormatter.formatInr(totalIncome), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = com.example.ui.theme.IncomeGreen)
+                    }
+                }
+            }
+        }
+
+        // Search Bar & Type Filter Chips
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search transactions, merchants, notes...") },
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    onValueChange = {
+                        searchQuery = it
+                        currentPage = 0
                     },
+                    modifier = Modifier.fillMaxWidth().testTag("tx_search_input"),
+                    placeholder = { Text("Search merchant, category, notes...", fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            IconButton(onClick = { searchQuery = ""; currentPage = 0 }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
                             }
                         }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("transaction_search_input")
+                    shape = RoundedCornerShape(14.dp)
                 )
-            }
 
-            // Category Filter Chips
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    item {
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (selectedCategoryFilter == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.clickable { selectedCategoryFilter = null }
-                        ) {
-                            Text(
-                                text = "All (${transactions.size})",
-                                color = if (selectedCategoryFilter == null) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                            )
-                        }
-                    }
-                    items(ExpenseCategory.entries.toTypedArray()) { cat ->
-                        val isSelected = selectedCategoryFilter == cat
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) Color(cat.defaultColor) else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.clickable {
-                                selectedCategoryFilter = if (isSelected) null else cat
-                            }
-                        ) {
-                            Text(
-                                text = cat.displayName,
-                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Transaction items
-            if (filteredTransactions.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "No matching transactions found.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium
+                    listOf(
+                        "ALL" to "All (${transactions.size})",
+                        "EXPENSE" to "Expenses",
+                        "INCOME" to "Income"
+                    ).forEach { (typeKey, label) ->
+                        FilterChip(
+                            selected = selectedTypeFilter == typeKey,
+                            onClick = {
+                                selectedTypeFilter = typeKey
+                                currentPage = 0
+                            },
+                            label = { Text(label, fontSize = 12.sp) }
                         )
                     }
                 }
-            } else {
-                items(filteredTransactions, key = { it.id }) { tx ->
-                    TransactionRow(
-                        tx = tx,
-                        onDelete = { viewModel.deleteTransaction(tx.id) }
-                    )
+            }
+        }
+
+        // Transactions List
+        if (filtered.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Receipt, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(40.dp))
+                        Text("No matching transactions", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("Try clearing your search query or switching filters", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
+        } else {
+            items(paged, key = { it.id }) { tx ->
+                TransactionCard(
+                    transaction = tx,
+                    onEdit = { transactionToEdit = tx },
+                    onDelete = { transactionToDelete = tx },
+                    canDelete = currentUserRole.canAddTransactions,
+                    canEdit = currentUserRole.canAddTransactions
+                )
+            }
 
-            item {
-                Spacer(modifier = Modifier.height(80.dp))
+            // Pagination Controls
+            if (totalPages > 1) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = { if (currentPage > 0) currentPage-- },
+                            enabled = currentPage > 0,
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Prev", fontSize = 12.sp)
+                        }
+
+                        Text(
+                            text = "Page ${currentPage + 1} of $totalPages (${filtered.size} items)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        OutlinedButton(
+                            onClick = { if (currentPage < totalPages - 1) currentPage++ },
+                            enabled = currentPage < totalPages - 1,
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Text("Next", fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
             }
         }
     }
 
-    if (showAddDialog) {
-        AddTransactionModal(
-            onDismiss = { showAddDialog = false },
-            onConfirm = { title, amount, category, isRecurring, notes ->
-                viewModel.addExpenseWithSmartDetect(title, amount, category, isRecurring, notes)
-                showAddDialog = false
+    // Delete confirmation
+    if (transactionToDelete != null) {
+        val tx = transactionToDelete!!
+        AlertDialog(
+            onDismissRequest = { transactionToDelete = null },
+            title = { Text("Delete Transaction?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("Are you sure you want to delete '${tx.merchant.ifBlank { tx.category }}' (${CurrencyFormatter.formatInr(tx.amount)})?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteTransaction(tx)
+                        transactionToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseRed)
+                ) {
+                    Text("Delete", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { transactionToDelete = null }) {
+                    Text("Cancel")
+                }
             }
         )
     }
-}
 
-@Composable
-fun AddTransactionModal(
-    onDismiss: () -> Unit,
-    onConfirm: (String, Double, ExpenseCategory, Boolean, String) -> Unit
-) {
-    var titleInput by remember { mutableStateOf("") }
-    var amountInput by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(ExpenseCategory.MISCELLANEOUS) }
-    var isRecurring by remember { mutableStateOf(false) }
-    var notesInput by remember { mutableStateOf("") }
-    var smartBadgeText by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(AppIcons.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Add Record (Smart Detect)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedTextField(
-                    value = titleInput,
-                    onValueChange = { input ->
-                        titleInput = input
-                        val detected = SmartDetector.detect(input)
-                        if (detected.suggestedCategory != ExpenseCategory.MISCELLANEOUS) {
-                            selectedCategory = detected.suggestedCategory
-                            smartBadgeText = "Detected: ${detected.suggestedCategory.displayName}"
-                        }
-                        if (detected.extractedAmount != null && amountInput.isEmpty()) {
-                            amountInput = detected.extractedAmount.toString()
-                        }
-                        if (detected.isRecurring) {
-                            isRecurring = true
-                        }
-                    },
-                    label = { Text("Description / Merchant") },
-                    placeholder = { Text("e.g. Chevron gas $45.00") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_tx_title_input")
-                )
-
-                if (smartBadgeText != null) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                    ) {
-                        Text(
-                            text = smartBadgeText!!,
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-
-                OutlinedTextField(
-                    value = amountInput,
-                    onValueChange = { amountInput = it },
-                    label = { Text("Amount ($)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_tx_amount_input")
-                )
-
-                Text("Category:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(ExpenseCategory.entries.toTypedArray()) { cat ->
-                        val isSel = selectedCategory == cat
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSel) Color(cat.defaultColor) else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.clickable { selectedCategory = cat }
-                        ) {
-                            Text(
-                                text = cat.displayName,
-                                color = if (isSel) Color.White else MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = isRecurring,
-                        onCheckedChange = { isRecurring = it }
-                    )
-                    Text("Recurring Monthly Payment", style = MaterialTheme.typography.bodyMedium)
-                }
-
-                OutlinedTextField(
-                    value = notesInput,
-                    onValueChange = { notesInput = it },
-                    label = { Text("Optional Notes") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val safeAmount = amountInput.replace(",", ".").toDoubleOrNull() ?: 0.0
-                    if (titleInput.isNotBlank() && safeAmount > 0) {
-                        onConfirm(titleInput, safeAmount, selectedCategory, isRecurring, notesInput)
-                    }
-                },
-                enabled = titleInput.isNotBlank() && (amountInput.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0,
-                modifier = Modifier.testTag("add_tx_confirm_btn")
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-        shape = RoundedCornerShape(20.dp)
-    )
+    if (transactionToEdit != null) {
+        EditTransactionDialog(
+            transaction = transactionToEdit!!,
+            accounts = accounts,
+            members = members,
+            onSave = { updated ->
+                onUpdateTransaction(updated)
+                transactionToEdit = null
+            },
+            onDismiss = { transactionToEdit = null }
+        )
+    }
 }

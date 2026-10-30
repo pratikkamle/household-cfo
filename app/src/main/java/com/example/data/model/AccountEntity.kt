@@ -39,9 +39,6 @@ data class AccountEntity(
     val institution: String = "", // e.g. "HDFC Bank", "LIC of India", "SBI Mutual Fund", "NSDL"
     val notes: String = "", // e.g. Policy details, Folio, Maturity date
     val creditLimit: Double = 0.0, // For credit cards
-    val billingCycleDay: Int? = null, // Day of month (1-31) when bill cycle closes
-    val paymentDueDateDay: Int? = null, // Day of month (1-31) when payment is due
-    val statementDueAmount: Double = 0.0, // Current monthly bill / due payment
     val currency: String = "INR",
     val isActive: Boolean = true
 )
